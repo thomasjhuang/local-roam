@@ -8,8 +8,26 @@
 
 use crate::vault::{Note, Vault};
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use serde::Serialize;
+
+/// Days of non-exercise after which an edge is considered fully faded (decay == 1.0).
+/// The thesis: a connection you haven't retrieved in a month has likely faded from
+/// memory, so the UI fades it too and demands a fresh justification to restore it.
+const DECAY_HORIZON_DAYS: f64 = 30.0;
+
+/// How faded an edge is on a 0.0 (fresh) … 1.0 (fully decayed) scale, from the time
+/// elapsed since it was last *exercised* — recalled, restored, or (at creation)
+/// justified. An edge with no exercise timestamp is treated as fully decayed.
+pub fn decay(last_recalled: Option<&str>, now: DateTime<Utc>) -> f64 {
+    let Some(ts) = last_recalled else { return 1.0 };
+    let Ok(then) = DateTime::parse_from_rfc3339(ts) else {
+        return 1.0;
+    };
+    let elapsed_days = (now - then.with_timezone(&Utc)).num_seconds() as f64 / 86_400.0;
+    (elapsed_days / DECAY_HORIZON_DAYS).clamp(0.0, 1.0)
+}
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct NodeMeta {
@@ -25,6 +43,10 @@ pub struct Backlink {
     pub from_title: String,
     pub why: String,
     pub recall_strength: f64,
+    /// RFC3339 of the last time this edge was exercised, or null if unknown.
+    pub last_recalled: Option<String>,
+    /// 0.0 (fresh) … 1.0 (fully faded). See [`decay`].
+    pub decay: f64,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -32,6 +54,10 @@ pub struct OutLink {
     pub to_id: String,
     pub to_title: String,
     pub why: String,
+    /// RFC3339 of the last time this edge was exercised, or null if unknown.
+    pub last_recalled: Option<String>,
+    /// 0.0 (fresh) … 1.0 (fully faded). See [`decay`].
+    pub decay: f64,
 }
 
 pub struct Index {
@@ -134,13 +160,16 @@ impl Index {
         )?;
 
         // Upsert edges; keep recall stats on conflict (only justification changes).
+        // A brand-new edge is stamped exercised *now* — justifying a link is itself an
+        // act of retrieval, so a fresh edge starts un-faded and only decays from here.
+        let now = Utc::now().to_rfc3339();
         let keep_targets: Vec<String> = note.links.iter().map(|l| l.to.clone()).collect();
         for link in &note.links {
             self.conn.execute(
-                "INSERT INTO edges (from_id, to_id, justification)
-                 VALUES (?1, ?2, ?3)
+                "INSERT INTO edges (from_id, to_id, justification, last_recalled)
+                 VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(from_id, to_id) DO UPDATE SET justification=excluded.justification",
-                rusqlite::params![note.id, link.to, link.why],
+                rusqlite::params![note.id, link.to, link.why, now],
             )?;
         }
         // Remove edges this note no longer authors.
@@ -208,35 +237,43 @@ impl Index {
     }
 
     pub fn backlinks(&self, id: &str) -> Result<Vec<Backlink>> {
+        let now = Utc::now();
         let mut stmt = self.conn.prepare(
-            "SELECT e.from_id, n.title, e.justification, e.recall_strength
+            "SELECT e.from_id, n.title, e.justification, e.recall_strength, e.last_recalled
              FROM edges e JOIN nodes n ON n.id = e.from_id
              WHERE e.to_id = ?1
              ORDER BY n.title COLLATE NOCASE",
         )?;
         let rows = stmt.query_map([id], |r| {
+            let last_recalled: Option<String> = r.get(4)?;
             Ok(Backlink {
                 from_id: r.get(0)?,
                 from_title: r.get(1)?,
                 why: r.get(2)?,
                 recall_strength: r.get(3)?,
+                decay: decay(last_recalled.as_deref(), now),
+                last_recalled,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
     pub fn outgoing(&self, id: &str) -> Result<Vec<OutLink>> {
+        let now = Utc::now();
         let mut stmt = self.conn.prepare(
-            "SELECT e.to_id, n.title, e.justification
+            "SELECT e.to_id, n.title, e.justification, e.last_recalled
              FROM edges e JOIN nodes n ON n.id = e.to_id
              WHERE e.from_id = ?1
              ORDER BY n.title COLLATE NOCASE",
         )?;
         let rows = stmt.query_map([id], |r| {
+            let last_recalled: Option<String> = r.get(3)?;
             Ok(OutLink {
                 to_id: r.get(0)?,
                 to_title: r.get(1)?,
                 why: r.get(2)?,
+                decay: decay(last_recalled.as_deref(), now),
+                last_recalled,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
@@ -258,6 +295,25 @@ impl Index {
             "INSERT INTO recall_log (from_id, to_id, success, ts) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![from_id, to_id, success as i32, now],
         )?;
+        Ok(())
+    }
+
+    /// Restore a decayed edge: stamp it exercised now (resetting decay to 0) and
+    /// strengthen it. The re-justification *friction* is enforced upstream by
+    /// `commit_edge` (which rejects an empty reason); this only touches the recall
+    /// telemetry. Errors if the edge does not exist. Not logged to `recall_log` —
+    /// re-justifying is not a recall quiz, so it must not pollute the review stats.
+    pub fn restore_edge(&self, from_id: &str, to_id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let n = self.conn.execute(
+            "UPDATE edges
+             SET last_recalled = ?1, recall_strength = recall_strength + 1
+             WHERE from_id = ?2 AND to_id = ?3",
+            rusqlite::params![now, from_id, to_id],
+        )?;
+        if n == 0 {
+            return Err(anyhow::anyhow!("no such edge to restore"));
+        }
         Ok(())
     }
 
@@ -360,6 +416,55 @@ mod tests {
         assert_eq!(idx.find_by_title_or_alias("  backprop ").unwrap().unwrap().id, b_id);
         assert_eq!(idx.find_by_title_or_alias("Backpropagation").unwrap().unwrap().id, b_id);
         assert!(idx.find_by_title_or_alias("backpro").unwrap().is_none(), "no fuzzy match");
+    }
+
+    #[test]
+    fn decay_grows_from_fresh_to_fully_faded() {
+        let now = DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        // No exercise timestamp at all → fully faded.
+        assert_eq!(decay(None, now), 1.0);
+        // Just exercised → fresh.
+        assert!(decay(Some(&now.to_rfc3339()), now) < 0.001);
+        // Halfway through the horizon → ~0.5.
+        let half = (now - chrono::Duration::days(15)).to_rfc3339();
+        assert!((decay(Some(&half), now) - 0.5).abs() < 0.02);
+        // Past the horizon → clamped at 1.0.
+        let stale = (now - chrono::Duration::days(60)).to_rfc3339();
+        assert_eq!(decay(Some(&stale), now), 1.0);
+    }
+
+    #[test]
+    fn a_just_justified_edge_is_fresh() {
+        let (_d, v, _a, b_id) = fixture();
+        let idx = Index::open_in_memory().unwrap();
+        idx.rebuild_from_vault(&v).unwrap();
+        // Justifying a link counts as exercising it: a brand-new edge is not faded.
+        assert!(idx.backlinks(&b_id).unwrap()[0].decay < 0.001);
+    }
+
+    #[test]
+    fn restore_resets_decay_and_strengthens() {
+        let (_d, v, a_id, b_id) = fixture();
+        let idx = Index::open_in_memory().unwrap();
+        idx.rebuild_from_vault(&v).unwrap();
+
+        // Age the edge well past the horizon so it is fully faded.
+        let old = (Utc::now() - chrono::Duration::days(90)).to_rfc3339();
+        idx.conn
+            .execute("UPDATE edges SET last_recalled = ?1", [&old])
+            .unwrap();
+        assert_eq!(idx.backlinks(&b_id).unwrap()[0].decay, 1.0);
+
+        // Re-justifying restores it: fresh again and one rep stronger.
+        idx.restore_edge(&a_id, &b_id).unwrap();
+        let bl = idx.backlinks(&b_id).unwrap();
+        assert!(bl[0].decay < 0.001, "restore makes the edge fresh again");
+        assert_eq!(bl[0].recall_strength, 1.0, "restore strengthens the edge");
+
+        // Restoring a non-existent edge is an error, not a silent no-op.
+        assert!(idx.restore_edge(&a_id, "no-such-id").is_err());
     }
 
     #[test]

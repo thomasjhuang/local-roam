@@ -33,6 +33,7 @@ pub fn run() {
             commands::resolve_link,
             commands::commit_link,
             commands::outgoing,
+            commands::restore_link,
             commands::submit_recall,
             commands::search,
         ])

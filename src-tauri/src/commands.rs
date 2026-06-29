@@ -115,6 +115,23 @@ pub fn outgoing(state: State<AppState>, id: String) -> Result<Vec<OutLink>, Stri
     with_vault(&state, |ov| ov.index.outgoing(&id))
 }
 
+/// Restore a faded (decayed) edge by re-justifying it. The justification is required
+/// and re-typed from memory — same friction as creating the link — so a decayed
+/// connection can only come back by re-stating *why* it exists. Re-writes the
+/// justification through the vault, then resets the edge's decay telemetry.
+#[tauri::command]
+pub fn restore_link(
+    state: State<AppState>,
+    from_id: String,
+    to_id: String,
+    justification: String,
+) -> Result<(), String> {
+    with_vault(&state, |ov| {
+        linker::commit_edge(&ov.vault, &ov.index, &from_id, &to_id, &justification)?;
+        ov.index.restore_edge(&from_id, &to_id)
+    })
+}
+
 #[tauri::command]
 pub fn submit_recall(
     state: State<AppState>,

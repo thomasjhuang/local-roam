@@ -54,8 +54,11 @@ This file on `main` is the single source of truth for what's done — future kic
 
 ## v2 backlog (explicitly out of scope for MVP)
 
-- [ ] **#13 Link decay** — unexercised edges fade visually and must be re-justified to restore.
+- [x] **#13 Link decay** — unexercised edges fade visually and must be re-justified to restore.
       touches: `src-tauri/src/index.rs`, `recall.rs` · blocked-by: none
+      Done: `index.rs` exposes `decay()` (0=fresh…1=faded from time since last exercised) +
+      `last_recalled`/`decay` on backlinks/outgoing + `restore_edge`; `restore_link` command
+      re-justifies (empty rejected → friction kept) then resets decay.
 - [ ] **#14 Spaced-repetition quizzing** — surface "how does A relate to B?" on a schedule from
       `last_recalled` / `recall_strength`.
       touches: `src-tauri/src/index.rs`, `recall.rs`, `commands.rs` · blocked-by: none
