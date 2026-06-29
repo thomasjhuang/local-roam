@@ -108,11 +108,11 @@ notes, never edges; tag browsing is an escape hatch, not the default path.
       #11 search escape hatch (present but unglamorous; never the default path).
       touches: read-only tag query in `src-tauri/src/index.rs`, `commands.rs`, `lib.rs`, `api.ts`,
       tags panel/route · blocked-by: #18-wave0
-- [ ] **#18d BibTeX/citation import** — parse `.bib`/arXiv → create a paper note (refs + body),
+- [x] **#18d BibTeX/citation import** — parse `.bib`/arXiv → create a paper note (refs + body),
       NOT its edges. Connecting it stays in the justified linker flow.
       touches: `src-tauri/src/bibtex.rs` (new), `commands.rs`, `lib.rs`, `api.ts`, import sub-route
       · blocked-by: #18-wave0
-- [ ] **#18e Web clipping** — clip a URL → a note (title + URL ref + extracted body), NOT its
+- [x] **#18e Web clipping** — clip a URL → a note (title + URL ref + extracted body), NOT its
       edges. Reuses #18d's paper-note helper. Same thesis guardrail as #18d.
       touches: `src-tauri/src/clip.rs` (new), `commands.rs`, `lib.rs`, `api.ts`, clip sub-route
       · blocked-by: #18d

@@ -5,6 +5,8 @@ use crate::index::{DueReview, FailedConnection, NodeMeta, OutLink};
 use crate::linker::{self, Resolution};
 use crate::recall::{self, RecallResult, ReviewReveal};
 use crate::state::{AppState, OpenVault};
+use crate::bibtex::{self, Source};
+use crate::clip;
 use crate::daily;
 use crate::templates;
 use crate::vault::Note;
@@ -231,4 +233,54 @@ pub fn open_daily_note(state: State<AppState>) -> Result<Note, String> {
         ov.index.reindex_note(&note)?;
         Ok(note)
     })
+}
+
+/// Write an imported source (paper or clip) into the vault as a note: its refs, tags,
+/// and the shared paper-note body. Never creates an edge — connecting it stays in the
+/// justified-link flow.
+fn create_source_note(state: &AppState, src: Source) -> Result<Note, String> {
+    let title = src.title.trim().to_string();
+    if title.is_empty() {
+        return Err("the imported source has no title".into());
+    }
+    let body = bibtex::note_body(&src);
+    with_vault(state, |ov| {
+        let note = ov
+            .vault
+            .create_note(&title, src.refs.clone(), vec![], src.tags.clone(), &body)?;
+        ov.index.reindex_note(&note)?;
+        Ok(note)
+    })
+}
+
+/// Import a citation into a paper note from either a pasted BibTeX entry or an arXiv
+/// id/URL. BibTeX is parsed offline; an arXiv id is resolved against the arXiv API. The
+/// note carries the refs and a body skeleton — it never carries edges.
+#[tauri::command]
+pub fn import_citation(state: State<AppState>, input: String) -> Result<Note, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("paste a BibTeX entry or an arXiv id/URL".into());
+    }
+    let src = if bibtex::looks_like_bibtex(trimmed) {
+        bibtex::parse_bibtex(trimmed).map_err(|e| format!("{e:#}"))?
+    } else if let Some(id) = bibtex::arxiv_id(trimmed) {
+        bibtex::fetch_arxiv(&id).map_err(|e| format!("{e:#}"))?
+    } else {
+        return Err("couldn't read that as a BibTeX entry or an arXiv id/URL".into());
+    };
+    create_source_note(&state, src)
+}
+
+/// Clip a URL into a note: fetch the page, extract its title and readable text, and
+/// record the URL as the note's ref. Capture only — it never creates an edge.
+#[tauri::command]
+pub fn clip_url(state: State<AppState>, url: String) -> Result<Note, String> {
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return Err("a URL is required".into());
+    }
+    let html = clip::fetch(&url).map_err(|e| format!("{e:#}"))?;
+    let src = clip::to_source(&html, &url);
+    create_source_note(&state, src)
 }

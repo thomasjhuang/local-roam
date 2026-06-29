@@ -51,6 +51,8 @@
     { href: "/graph", label: "⊹ reconstruct the graph" },
     { href: "/capture/template", label: "✚ new from template" },
     { href: "/capture/daily", label: "✎ today's note" },
+    { href: "/capture/import", label: "⇲ import a citation" },
+    { href: "/capture/clip", label: "✂ clip a URL" },
   ];
 
   onMount(async () => {

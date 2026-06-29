@@ -24,6 +24,9 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["clock"] }
 walkdir = "2"
 anyhow = "1"
+# Blocking HTTP for capture imports (#18d arXiv fetch, #18e web clip). Blocking fits the
+# synchronous Tauri command layer; rustls (default `tls` feature) keeps it OpenSSL-free.
+ureq = { version = "2", default-features = false, features = ["tls", "gzip"] }
 
 [dev-dependencies]
 tempfile = "3"

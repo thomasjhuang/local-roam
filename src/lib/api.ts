@@ -97,5 +97,12 @@ export const api = {
       invoke<Note>("create_from_template", { templateId, title }),
     /** Open (creating once, if needed) today's dated quick-capture note (#18b). */
     openDailyNote: () => invoke<Note>("open_daily_note"),
+    /**
+     * Import a BibTeX entry (parsed offline) or an arXiv id/URL (fetched from arXiv)
+     * into a paper note — refs + body skeleton, no edges (#18d).
+     */
+    importCitation: (input: string) => invoke<Note>("import_citation", { input }),
+    /** Clip a URL → a note with its title, the URL as a ref, and the extracted body — no edges (#18e). */
+    clipUrl: (url: string) => invoke<Note>("clip_url", { url }),
   },
 };
