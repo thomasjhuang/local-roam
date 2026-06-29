@@ -95,5 +95,7 @@ export const api = {
     /** Create a note from a template id; pre-fills the body skeleton, no edges. */
     createFromTemplate: (templateId: string, title: string) =>
       invoke<Note>("create_from_template", { templateId, title }),
+    /** Open (creating once, if needed) today's dated quick-capture note (#18b). */
+    openDailyNote: () => invoke<Note>("open_daily_note"),
   },
 };

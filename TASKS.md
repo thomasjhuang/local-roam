@@ -101,7 +101,7 @@ notes, never edges; tag browsing is an escape hatch, not the default path.
       autocomplete, links still justified).
       touches: `src-tauri/src/templates.rs` (new), `commands.rs`, `lib.rs`, `api.ts`, capture sub-route
       · blocked-by: #18-wave0
-- [ ] **#18b Daily/fleeting notes** — a dated quick-capture note; reuses the template logic.
+- [x] **#18b Daily/fleeting notes** — a dated quick-capture note; reuses the template logic.
       touches: `src-tauri/src/daily.rs` (new), `commands.rs`, `lib.rs`, `api.ts`, capture sub-route
       · blocked-by: #18a
 - [ ] **#18c Tags-as-navigation** — browse notes by tag behind a disclosure, modelled on the

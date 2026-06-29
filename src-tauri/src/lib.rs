@@ -7,6 +7,7 @@ mod state;
 mod vault;
 // capture bundle (#18): each slice declares its module here, append-only.
 mod templates;
+mod daily;
 
 use state::AppState;
 use tauri::Manager;
@@ -44,6 +45,7 @@ pub fn run() {
             // capture bundle (#18): each slice appends its command(s) here, append-only.
             commands::list_templates,
             commands::create_from_template,
+            commands::open_daily_note,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

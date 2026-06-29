@@ -50,6 +50,7 @@
   const navLinks: { href: string; label: string }[] = [
     { href: "/graph", label: "⊹ reconstruct the graph" },
     { href: "/capture/template", label: "✚ new from template" },
+    { href: "/capture/daily", label: "✎ today's note" },
   ];
 
   onMount(async () => {

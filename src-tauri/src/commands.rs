@@ -5,6 +5,7 @@ use crate::index::{DueReview, FailedConnection, NodeMeta, OutLink};
 use crate::linker::{self, Resolution};
 use crate::recall::{self, RecallResult, ReviewReveal};
 use crate::state::{AppState, OpenVault};
+use crate::daily;
 use crate::templates;
 use crate::vault::Note;
 use tauri::State;
@@ -208,6 +209,25 @@ pub fn create_from_template(
     let body = templates::render(&tpl.body, &title, &date);
     with_vault(&state, |ov| {
         let note = ov.vault.create_note(&title, vec![], vec![], tpl.tags.clone(), &body)?;
+        ov.index.reindex_note(&note)?;
+        Ok(note)
+    })
+}
+
+/// Open today's daily/fleeting note, creating it the first time it's asked for. Keyed
+/// by the date title so a day always resolves to the same note (no duplicates) — the
+/// lookup reuses the linker's exact resolver. Capture only: it never creates an edge.
+#[tauri::command]
+pub fn open_daily_note(state: State<AppState>) -> Result<Note, String> {
+    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let title = daily::title_for(&date);
+    with_vault(&state, |ov| {
+        if let Resolution::Exact(node) = linker::resolve(&ov.index, &title)? {
+            return ov.vault.read_note(&node.id);
+        }
+        let note = ov
+            .vault
+            .create_note(&title, vec![], vec![], daily::tags(), &daily::render_body(&date))?;
         ov.index.reindex_note(&note)?;
         Ok(note)
     })
