@@ -84,6 +84,38 @@ This file on `main` is the single source of truth for what's done — future kic
       touches: `src/routes/graph/+page.svelte` (new), `src/lib/Graph.svelte` (new),
       `src/routes/+page.svelte` (1 line nav) · blocked-by: none
       (⚠ shares the 1-line `+page.svelte` edit with #16 — sequence those two touches)
-- [ ] **#18 Capture bundle** — daily/fleeting notes, templates, tags-as-navigation,
-      BibTeX/citation import, web clipping. Own epic; split further before kickoff.
-      touches: `src-tauri/src/vault.rs`, `index.rs`, `commands.rs`, `src/**` · blocked-by: deferred
+### #18 Capture bundle (epic — split into the vertical slices below)
+
+Each slice owns a NEW Rust module instead of bloating `vault.rs`/`index.rs`. The four shared
+seams — `commands.rs`, `lib.rs` (the `generate_handler!` list), `src/lib/api.ts`, and
+`src/routes/+page.svelte` (nav) — are **append-only**: add your entry, never reorder, rebase
+before pushing. **Thesis guardrail (CONTEXT.md):** capture is allowed, but *connecting* a
+captured note stays in the no-autocomplete justified-link flow — import/clip/templates create
+notes, never edges; tag browsing is an escape hatch, not the default path.
+
+- [ ] **#18-wave0 Capture scaffold** — make the seams append-friendly once: a data-driven nav
+      array in `+page.svelte`, a `capture` namespace in `api.ts`, the command-registration
+      pattern in `lib.rs`. Gates #18c/#18d. (First commit of the capture-scaffold-notes lane.)
+      touches: `src/routes/+page.svelte`, `src/lib/api.ts`, `src-tauri/src/lib.rs` · blocked-by: none
+- [ ] **#18a Note templates** — scaffolding for new-note bodies (NOT a capture shortcut: no
+      autocomplete, links still justified).
+      touches: `src-tauri/src/templates.rs` (new), `commands.rs`, `lib.rs`, `api.ts`, capture sub-route
+      · blocked-by: #18-wave0
+- [ ] **#18b Daily/fleeting notes** — a dated quick-capture note; reuses the template logic.
+      touches: `src-tauri/src/daily.rs` (new), `commands.rs`, `lib.rs`, `api.ts`, capture sub-route
+      · blocked-by: #18a
+- [ ] **#18c Tags-as-navigation** — browse notes by tag behind a disclosure, modelled on the
+      #11 search escape hatch (present but unglamorous; never the default path).
+      touches: read-only tag query in `src-tauri/src/index.rs`, `commands.rs`, `lib.rs`, `api.ts`,
+      tags panel/route · blocked-by: #18-wave0
+- [ ] **#18d BibTeX/citation import** — parse `.bib`/arXiv → create a paper note (refs + body),
+      NOT its edges. Connecting it stays in the justified linker flow.
+      touches: `src-tauri/src/bibtex.rs` (new), `commands.rs`, `lib.rs`, `api.ts`, import sub-route
+      · blocked-by: #18-wave0
+- [ ] **#18e Web clipping** — clip a URL → a note (title + URL ref + extracted body), NOT its
+      edges. Reuses #18d's paper-note helper. Same thesis guardrail as #18d.
+      touches: `src-tauri/src/clip.rs` (new), `commands.rs`, `lib.rs`, `api.ts`, clip sub-route
+      · blocked-by: #18d
+
+Lanes: **A** capture-scaffold-notes (wave0 → #18a → #18b, opus) · **B** capture-import
+(#18d → #18e, opus) · **C** tags-navigation (#18c, sonnet). B and C start once #18-wave0 is on `main`.
