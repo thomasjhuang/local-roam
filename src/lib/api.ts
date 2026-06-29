@@ -73,4 +73,12 @@ export const api = {
   search: (query: string) => invoke<NodeMeta[]>("search", { query }),
   /** Connections most often failed in recall, most-failed first. Justification withheld. */
   whatToReview: (limit: number) => invoke<FailedConnection[]>("what_to_review", { limit }),
+
+  /**
+   * Capture namespace — features that *create notes* (templates, daily notes, imports,
+   * web clips). Thesis guardrail: capture creates notes, never edges. Connecting a
+   * captured note still goes through the no-autocomplete justified-link flow above.
+   * Each #18 slice appends its binding here — append-only, never reorder.
+   */
+  capture: {},
 };

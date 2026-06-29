@@ -46,6 +46,11 @@
 
   const parseList = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
 
+  // --- sidebar nav (data-driven; capture slices append entries, append-only) ---
+  const navLinks: { href: string; label: string }[] = [
+    { href: "/graph", label: "⊹ reconstruct the graph" },
+  ];
+
   onMount(async () => {
     try {
       const saved = await api.getSavedVault();
@@ -206,7 +211,9 @@
   <div class="app">
     <aside class="sidebar">
       <div class="vault-path" title={vaultPath}>{vaultPath}</div>
-      <a class="navlink" href="/graph">⊹ reconstruct the graph</a>
+      {#each navLinks as link (link.href)}
+        <a class="navlink" href={link.href}>{link.label}</a>
+      {/each}
       {#if creating}
         <div class="newnote">
           <input placeholder="New note title…" bind:value={newTitle}
