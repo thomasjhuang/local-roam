@@ -68,8 +68,10 @@ This file on `main` is the single source of truth for what's done — future kic
       still goes through the "Link from memory" flow. — `src/lib/Editor.svelte` (f024a2c)
       touches: `package.json`, `src/lib/Editor.svelte` (new), `src/routes/+page.svelte` (1 line)
       · blocked-by: none
-- [ ] **#17 Draw-the-edges graph** — user reconstructs the edges from memory, then it's scored
-      against reality. The only graph the thesis allows (no auto-drawn readable map).
+- [x] **#17 Draw-the-edges graph** (39e9146) — user reconstructs the edges from memory on the
+      `/graph` route, then scores them against the real `outgoing` edges (recalled/missed/spurious,
+      with justifications revealed as feedback). Nodes shown; edges hidden; deterministic circle
+      layout leaks no structure; nothing real drawn before scoring. The only graph the thesis allows.
       touches: `src/routes/graph/+page.svelte` (new), `src/lib/Graph.svelte` (new),
       `src/routes/+page.svelte` (1 line nav) · blocked-by: none
       (⚠ shares the 1-line `+page.svelte` edit with #16 — sequence those two touches)
