@@ -93,7 +93,7 @@ before pushing. **Thesis guardrail (CONTEXT.md):** capture is allowed, but *conn
 captured note stays in the no-autocomplete justified-link flow — import/clip/templates create
 notes, never edges; tag browsing is an escape hatch, not the default path.
 
-- [ ] **#18-wave0 Capture scaffold** — make the seams append-friendly once: a data-driven nav
+- [x] **#18-wave0 Capture scaffold** — make the seams append-friendly once: a data-driven nav
       array in `+page.svelte`, a `capture` namespace in `api.ts`, the command-registration
       pattern in `lib.rs`. Gates #18c/#18d. (First commit of the capture-scaffold-notes lane.)
       touches: `src/routes/+page.svelte`, `src/lib/api.ts`, `src-tauri/src/lib.rs` · blocked-by: none
