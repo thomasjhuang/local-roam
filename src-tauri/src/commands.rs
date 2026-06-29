@@ -1,7 +1,7 @@
 //! Tauri command layer — thin glue exposing the deep modules to the frontend.
 //! Intentionally shallow; not unit-tested (the logic lives in the modules below it).
 
-use crate::index::{DueReview, NodeMeta, OutLink};
+use crate::index::{DueReview, FailedConnection, NodeMeta, OutLink};
 use crate::linker::{self, Resolution};
 use crate::recall::{self, RecallResult, ReviewReveal};
 use crate::state::{AppState, OpenVault};
@@ -162,6 +162,16 @@ pub fn grade_review(
     with_vault(&state, |ov| {
         recall::grade_review(&ov.index, &from_id, &to_id, recalled)
     })
+}
+
+/// The connections the user fails most often, for the "what to review" surface.
+/// Justifications are withheld — it points at weak spots, it is not a cheat sheet.
+#[tauri::command]
+pub fn what_to_review(
+    state: State<AppState>,
+    limit: i64,
+) -> Result<Vec<FailedConnection>, String> {
+    with_vault(&state, |ov| ov.index.most_failed_connections(limit))
 }
 
 #[tauri::command]

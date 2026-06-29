@@ -96,6 +96,19 @@ pub struct DueReview {
     pub last_recalled: Option<String>,
 }
 
+/// A connection the user keeps failing to recall, for the "what to review" surface.
+/// Carries the endpoints and failure stats but *not* the justification — it points you
+/// at a weak spot to review, it is not a cheat sheet.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct FailedConnection {
+    pub from_id: String,
+    pub from_title: String,
+    pub to_id: String,
+    pub to_title: String,
+    pub failures: i64,
+    pub attempts: i64,
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct OutLink {
     pub to_id: String,
@@ -413,6 +426,35 @@ impl Index {
         Ok(row)
     }
 
+    /// The connections most often failed in recall, drawn from the full `recall_log`
+    /// history, most-failed first. Only connections whose endpoints both still exist
+    /// and that have failed at least once appear. The justification is withheld.
+    pub fn most_failed_connections(&self, limit: i64) -> Result<Vec<FailedConnection>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT l.from_id, f.title, l.to_id, t.title,
+                    SUM(1 - l.success) AS failures,
+                    COUNT(*) AS attempts
+             FROM recall_log l
+             JOIN nodes f ON f.id = l.from_id
+             JOIN nodes t ON t.id = l.to_id
+             GROUP BY l.from_id, l.to_id
+             HAVING failures > 0
+             ORDER BY failures DESC, attempts DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit], |r| {
+            Ok(FailedConnection {
+                from_id: r.get(0)?,
+                from_title: r.get(1)?,
+                to_id: r.get(2)?,
+                to_title: r.get(3)?,
+                failures: r.get(4)?,
+                attempts: r.get(5)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
     /// Full-text-ish search over title, aliases and body. The deliberate escape hatch.
     pub fn search(&self, query: &str) -> Result<Vec<NodeMeta>> {
         let q = query.trim();
@@ -624,6 +666,43 @@ mod tests {
         assert_eq!(due[1].from_id, c.id);
         // Justification is withheld from the queue.
         assert_eq!(due[0].to_title, "B");
+    }
+
+    #[test]
+    fn what_to_review_ranks_most_failed_connections() {
+        // Two edges into B: A->B and C->B.
+        let dir = TempDir::new().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let b = v.create_note("B", vec![], vec![], vec![], "").unwrap();
+        let mut a = v.create_note("A", vec![], vec![], vec![], "").unwrap();
+        let mut c = v.create_note("C", vec![], vec![], vec![], "").unwrap();
+        a.links.push(Link { to: b.id.clone(), why: "a why".into() });
+        c.links.push(Link { to: b.id.clone(), why: "c why".into() });
+        v.write_note(&a).unwrap();
+        v.write_note(&c).unwrap();
+        let idx = Index::open_in_memory().unwrap();
+        idx.rebuild_from_vault(&v).unwrap();
+
+        // A->B: 2 failures / 3 attempts. C->B: 1 failure / 2 attempts.
+        idx.record_recall(&a.id, &b.id, false).unwrap();
+        idx.record_recall(&a.id, &b.id, false).unwrap();
+        idx.record_recall(&a.id, &b.id, true).unwrap();
+        idx.record_recall(&c.id, &b.id, false).unwrap();
+        idx.record_recall(&c.id, &b.id, true).unwrap();
+
+        let review = idx.most_failed_connections(10).unwrap();
+        assert_eq!(review.len(), 2);
+        assert_eq!(review[0].from_id, a.id, "most-failed connection ranks first");
+        assert_eq!(review[0].from_title, "A");
+        assert_eq!(review[0].to_title, "B");
+        assert_eq!(review[0].failures, 2);
+        assert_eq!(review[0].attempts, 3);
+        assert_eq!(review[1].from_id, c.id);
+        assert_eq!(review[1].failures, 1);
+
+        // A connection that was always recalled never surfaces; the limit is honored.
+        idx.record_recall(&a.id, &b.id, true).unwrap();
+        assert_eq!(idx.most_failed_connections(1).unwrap().len(), 1);
     }
 
     #[test]

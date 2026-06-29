@@ -37,6 +37,7 @@ pub fn run() {
             commands::submit_recall,
             commands::due_reviews,
             commands::grade_review,
+            commands::what_to_review,
             commands::search,
         ])
         .run(tauri::generate_context!())

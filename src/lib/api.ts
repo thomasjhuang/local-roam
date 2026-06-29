@@ -43,6 +43,16 @@ export interface RecallResult {
   reveal: Backlink[];
 }
 
+/** A connection the user keeps failing to recall — the justification is withheld. */
+export interface FailedConnection {
+  from_id: string;
+  from_title: string;
+  to_id: string;
+  to_title: string;
+  failures: number;
+  attempts: number;
+}
+
 export const api = {
   getSavedVault: () => invoke<string | null>("get_saved_vault"),
   openVault: (path: string) => invoke<void>("open_vault", { path }),
@@ -61,4 +71,6 @@ export const api = {
   submitRecall: (noteId: string, guesses: string[]) =>
     invoke<RecallResult>("submit_recall", { noteId, guesses }),
   search: (query: string) => invoke<NodeMeta[]>("search", { query }),
+  /** Connections most often failed in recall, most-failed first. Justification withheld. */
+  whatToReview: (limit: number) => invoke<FailedConnection[]>("what_to_review", { limit }),
 };

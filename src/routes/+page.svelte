@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { api, type NodeMeta, type Note, type OutLink, type RecallResult } from "$lib/api";
+  import { api, type FailedConnection, type NodeMeta, type Note, type OutLink, type RecallResult } from "$lib/api";
   import Editor from "$lib/Editor.svelte";
 
   // --- vault ---
@@ -41,6 +41,9 @@
   let searchQuery = $state("");
   let searchResults = $state<NodeMeta[]>([]);
 
+  // --- what to review (the connections you fail most) ---
+  let reviewItems = $state<FailedConnection[]>([]);
+
   const parseList = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
 
   onMount(async () => {
@@ -62,6 +65,7 @@
       await api.openVault(path);
       vaultPath = path;
       await refreshNotes();
+      await refreshReview();
     } catch (e) {
       error = String(e);
     }
@@ -69,6 +73,14 @@
 
   async function refreshNotes() {
     notes = await api.listNotes();
+  }
+
+  async function refreshReview() {
+    try {
+      reviewItems = await api.whatToReview(20);
+    } catch (e) {
+      error = String(e);
+    }
   }
 
   async function selectNote(id: string) {
@@ -126,6 +138,8 @@
     if (!note) return;
     if (!giveUp && guessInput.trim()) addGuess();
     recall = await api.submitRecall(note.id, giveUp ? [] : guesses);
+    // recalling logs hits/misses — refresh the "what to review" list.
+    await refreshReview();
   }
 
   // ---- link from memory ----
@@ -217,6 +231,25 @@
         {/each}
         {#if !notes.length}<li class="empty">No notes yet.</li>{/if}
       </ul>
+
+      {#if reviewItems.length}
+        <div class="review">
+          <div class="review-head">what to review</div>
+          <p class="sub">Connections you miss most. The reason is hidden — go re-recall it.</p>
+          <ul class="reviewlist">
+            {#each reviewItems as r (r.from_id + r.to_id)}
+              <li>
+                <button class="linkbtn" onclick={() => selectNote(r.to_id)}>
+                  {r.from_title} → {r.to_title}
+                </button>
+                <span class="fail" title="{r.failures} misses in {r.attempts} attempts">
+                  missed {r.failures}/{r.attempts}
+                </span>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
 
       <div class="search">
         <button class="ghost small" onclick={() => (searchOpen = !searchOpen)}>
@@ -379,4 +412,11 @@
   button.danger { color: #e0a0a0; }
   .hint { color: #6b7178; }
   .err { color: #e57373; font-size: .85rem; }
+  .review { margin-top: 1rem; border-top: 1px solid #23272e; padding-top: .7rem; }
+  .review-head { font-size: .8rem; color: #c9a85f; font-weight: 600; }
+  .review .sub { margin: .2rem 0 .4rem; }
+  .reviewlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .45rem; }
+  .reviewlist li { display: flex; gap: .5rem; align-items: baseline; justify-content: space-between; }
+  .reviewlist .linkbtn { white-space: normal; text-align: left; }
+  .fail { color: #e0a0a0; font-size: .72rem; white-space: nowrap; }
 </style>

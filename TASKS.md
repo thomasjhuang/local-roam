@@ -66,9 +66,12 @@ This file on `main` is the single source of truth for what's done — future kic
       Done: `index.rs` `review_interval_days`/`is_due` (SM-2 geometric backoff) + `due_reviews()`
       (most-overdue-first, justification withheld); `recall.rs` `grade_review` reveals the why
       only after a committed self-grade and records the rep; `due_reviews`/`grade_review` commands.
-- [ ] **#15 "What to review" surface** — list the connections most often failed, driven by
+- [x] **#15 "What to review" surface** — list the connections most often failed, driven by
       `recall_log`.
       touches: `src-tauri/src/index.rs`, `commands.rs`, `src/routes/+page.svelte` · blocked-by: #13
+      Done: `index.rs` `most_failed_connections` aggregates `recall_log` (most-failed first,
+      endpoints only — justification withheld); `what_to_review` command + `api.ts`; sidebar
+      "what to review" panel lists weak connections and routes you to re-recall them.
 - [x] **#16 CodeMirror Markdown editor** — replaced the body `<textarea>` with CodeMirror +
       display-only `[[wiki-link]]` rendering. NO link autocomplete (see `CONTEXT.md`); linking
       still goes through the "Link from memory" flow. — `src/lib/Editor.svelte` (f024a2c)
