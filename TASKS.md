@@ -40,11 +40,38 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       "escape hatch" disclosure.
 - [x] **#12 CONTEXT.md + README** — `CONTEXT.md` (design thesis), `README.md` (run/test).
 
+## Kickoff state protocol
+
+This file on `main` is the single source of truth for what's done — future kickoffs
+(`kickoff-text-issues`) read it and skip `[x]` items. So:
+
+1. Each issue carries `touches:` (files it owns) and `blocked-by:` so a kickoff can form
+   conflict-free lanes from this text alone, without skimming the repo.
+2. **When an agent finishes an issue, its final commit ticks the box here** — change `[ ]` to
+   `[x]`, append the commit hash, then `git pull --rebase` and push to `main`. This file is
+   shared across lanes, so tick it *last* and rebase to avoid clobbering a sibling's tick.
+3. Only `[ ]` (todo) and `[~]` (in progress) issues are eligible for a new kickoff.
+
 ## v2 backlog (explicitly out of scope for MVP)
 
-- [ ] Draw-the-edges-from-memory graph reconstruction (scored against reality).
-- [ ] Spaced-repetition quizzing of relationships (uses `last_recalled` / `recall_strength`).
-- [ ] Link decay — unexercised edges fade and must be re-justified.
-- [ ] "What to review" surface driven by `recall_log` (failed recall attempts are the signal).
-- [ ] CodeMirror Markdown editor (replace the textarea) with `[[wiki-link]]` rendering.
-- [ ] Daily/fleeting notes; templates; tags-as-navigation; BibTeX/citation import; web clipping.
+- [ ] **#13 Link decay** — unexercised edges fade visually and must be re-justified to restore.
+      touches: `src-tauri/src/index.rs`, `recall.rs` · blocked-by: none
+- [ ] **#14 Spaced-repetition quizzing** — surface "how does A relate to B?" on a schedule from
+      `last_recalled` / `recall_strength`.
+      touches: `src-tauri/src/index.rs`, `recall.rs`, `commands.rs` · blocked-by: none
+      (shares files with #13 → same lane, run after #13)
+- [ ] **#15 "What to review" surface** — list the connections most often failed, driven by
+      `recall_log`.
+      touches: `src-tauri/src/index.rs`, `commands.rs`, `src/routes/+page.svelte` · blocked-by: #13
+- [ ] **#16 CodeMirror Markdown editor** — replace the body `<textarea>` with CodeMirror +
+      `[[wiki-link]]` rendering. Do NOT add link autocomplete (see `CONTEXT.md`).
+      touches: `package.json`, `src/lib/Editor.svelte` (new), `src/routes/+page.svelte` (1 line)
+      · blocked-by: none
+- [ ] **#17 Draw-the-edges graph** — user reconstructs the edges from memory, then it's scored
+      against reality. The only graph the thesis allows (no auto-drawn readable map).
+      touches: `src/routes/graph/+page.svelte` (new), `src/lib/Graph.svelte` (new),
+      `src/routes/+page.svelte` (1 line nav) · blocked-by: none
+      (⚠ shares the 1-line `+page.svelte` edit with #16 — sequence those two touches)
+- [ ] **#18 Capture bundle** — daily/fleeting notes, templates, tags-as-navigation,
+      BibTeX/citation import, web clipping. Own epic; split further before kickoff.
+      touches: `src-tauri/src/vault.rs`, `index.rs`, `commands.rs`, `src/**` · blocked-by: deferred
