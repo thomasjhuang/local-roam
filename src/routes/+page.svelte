@@ -192,6 +192,7 @@
   <div class="app">
     <aside class="sidebar">
       <div class="vault-path" title={vaultPath}>{vaultPath}</div>
+      <a class="navlink" href="/graph">⊹ reconstruct the graph</a>
       {#if creating}
         <div class="newnote">
           <input placeholder="New note title…" bind:value={newTitle}
@@ -340,6 +341,8 @@
   .app { display: grid; grid-template-columns: 280px 1fr; height: 100vh; }
   .sidebar { border-right: 1px solid #262a30; display: flex; flex-direction: column; padding: .6rem; gap: .6rem; overflow: hidden; }
   .vault-path { font-size: .7rem; color: #6b7178; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .navlink { font-size: .8rem; color: #8fb8ff; text-decoration: none; padding: .1rem 0; }
+  .navlink:hover { text-decoration: underline; }
   .notelist { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
   .notelist li button { width: 100%; text-align: left; background: none; border: none; color: #d2d6db; padding: .4rem .5rem; border-radius: 6px; cursor: pointer; font-size: .9rem; }
   .notelist li.active button, .notelist li button:hover { background: #1f242b; }
