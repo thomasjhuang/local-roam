@@ -49,6 +49,7 @@
   // --- sidebar nav (data-driven; capture slices append entries, append-only) ---
   const navLinks: { href: string; label: string }[] = [
     { href: "/graph", label: "⊹ reconstruct the graph" },
+    { href: "/capture/template", label: "✚ new from template" },
   ];
 
   onMount(async () => {

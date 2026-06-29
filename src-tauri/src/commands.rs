@@ -5,6 +5,7 @@ use crate::index::{DueReview, FailedConnection, NodeMeta, OutLink};
 use crate::linker::{self, Resolution};
 use crate::recall::{self, RecallResult, ReviewReveal};
 use crate::state::{AppState, OpenVault};
+use crate::templates;
 use crate::vault::Note;
 use tauri::State;
 
@@ -177,4 +178,37 @@ pub fn what_to_review(
 #[tauri::command]
 pub fn search(state: State<AppState>, query: String) -> Result<Vec<NodeMeta>, String> {
     with_vault(&state, |ov| ov.index.search(&query))
+}
+
+// --- capture bundle (#18): commands that create notes, never edges ---------------
+
+/// The built-in note-body templates. A template pre-fills structure (prompts/headings)
+/// only — it is not a capture shortcut, and it never creates edges.
+#[tauri::command]
+pub fn list_templates() -> Vec<templates::Template> {
+    templates::builtin()
+}
+
+/// Create a new note from a template: render its body skeleton with the title and
+/// today's date, apply its suggested tags, and write it through the vault. Connecting
+/// the note afterwards still happens in the justified-link flow.
+#[tauri::command]
+pub fn create_from_template(
+    state: State<AppState>,
+    template_id: String,
+    title: String,
+) -> Result<Note, String> {
+    let tpl = templates::by_id(&template_id)
+        .ok_or_else(|| format!("unknown template '{template_id}'"))?;
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err("a note needs a title".into());
+    }
+    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let body = templates::render(&tpl.body, &title, &date);
+    with_vault(&state, |ov| {
+        let note = ov.vault.create_note(&title, vec![], vec![], tpl.tags.clone(), &body)?;
+        ov.index.reindex_note(&note)?;
+        Ok(note)
+    })
 }

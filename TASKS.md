@@ -97,7 +97,7 @@ notes, never edges; tag browsing is an escape hatch, not the default path.
       array in `+page.svelte`, a `capture` namespace in `api.ts`, the command-registration
       pattern in `lib.rs`. Gates #18c/#18d. (First commit of the capture-scaffold-notes lane.)
       touches: `src/routes/+page.svelte`, `src/lib/api.ts`, `src-tauri/src/lib.rs` · blocked-by: none
-- [ ] **#18a Note templates** — scaffolding for new-note bodies (NOT a capture shortcut: no
+- [x] **#18a Note templates** — scaffolding for new-note bodies (NOT a capture shortcut: no
       autocomplete, links still justified).
       touches: `src-tauri/src/templates.rs` (new), `commands.rs`, `lib.rs`, `api.ts`, capture sub-route
       · blocked-by: #18-wave0

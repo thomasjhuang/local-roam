@@ -43,6 +43,15 @@ export interface RecallResult {
   reveal: Backlink[];
 }
 
+/** A built-in new-note body skeleton (#18a). Structure only — never edges. */
+export interface Template {
+  id: string;
+  name: string;
+  description: string;
+  tags: string[];
+  body: string;
+}
+
 /** A connection the user keeps failing to recall — the justification is withheld. */
 export interface FailedConnection {
   from_id: string;
@@ -80,5 +89,11 @@ export const api = {
    * captured note still goes through the no-autocomplete justified-link flow above.
    * Each #18 slice appends its binding here — append-only, never reorder.
    */
-  capture: {},
+  capture: {
+    /** The built-in note-body templates (#18a). */
+    listTemplates: () => invoke<Template[]>("list_templates"),
+    /** Create a note from a template id; pre-fills the body skeleton, no edges. */
+    createFromTemplate: (templateId: string, title: string) =>
+      invoke<Note>("create_from_template", { templateId, title }),
+  },
 };
