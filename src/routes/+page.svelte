@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { api, type NodeMeta, type Note, type OutLink, type RecallResult } from "$lib/api";
+  import Editor from "$lib/Editor.svelte";
 
   // --- vault ---
   let vaultPath = $state<string | null>(null);
@@ -241,7 +242,7 @@
           <label>aliases <input bind:value={aliasesStr} placeholder="comma, separated" /></label>
           <label>tags <input bind:value={tagsStr} placeholder="comma, separated" /></label>
         </div>
-        <textarea class="body" bind:value={body} placeholder="Write the idea in your own words…"></textarea>
+        <Editor bind:value={body} placeholder="Write the idea in your own words…" />
         <div class="actions">
           <button onclick={save}>{savedFlash ? "Saved ✓" : "Save"}</button>
           <button class="ghost" onclick={startLink}>Link from memory</button>
@@ -349,7 +350,6 @@
   .title { font-size: 1.6rem; font-weight: 600; width: 100%; background: none; border: none; color: #fff; border-bottom: 1px solid #262a30; padding: .2rem 0; box-sizing: border-box; }
   .meta { display: flex; gap: 1rem; margin: .6rem 0; flex-wrap: wrap; }
   .meta label { font-size: .7rem; color: #6b7178; display: flex; flex-direction: column; gap: .2rem; }
-  .body { width: 100%; min-height: 30vh; box-sizing: border-box; background: #1a1d22; border: 1px solid #262a30; border-radius: 8px; color: #e6e6e6; padding: .8rem; font-size: .95rem; line-height: 1.5; resize: vertical; }
   .actions { display: flex; gap: .5rem; margin: .8rem 0; }
   .panel { background: #16191e; border: 1px solid #23272e; border-radius: 10px; padding: .9rem 1rem; margin-top: 1rem; }
   .panel h3 { margin: 0 0 .5rem; font-size: .95rem; color: #c8cdd3; }
