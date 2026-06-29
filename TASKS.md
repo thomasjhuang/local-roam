@@ -59,10 +59,13 @@ This file on `main` is the single source of truth for what's done — future kic
       Done: `index.rs` exposes `decay()` (0=fresh…1=faded from time since last exercised) +
       `last_recalled`/`decay` on backlinks/outgoing + `restore_edge`; `restore_link` command
       re-justifies (empty rejected → friction kept) then resets decay.
-- [ ] **#14 Spaced-repetition quizzing** — surface "how does A relate to B?" on a schedule from
+- [x] **#14 Spaced-repetition quizzing** — surface "how does A relate to B?" on a schedule from
       `last_recalled` / `recall_strength`.
       touches: `src-tauri/src/index.rs`, `recall.rs`, `commands.rs` · blocked-by: none
       (shares files with #13 → same lane, run after #13)
+      Done: `index.rs` `review_interval_days`/`is_due` (SM-2 geometric backoff) + `due_reviews()`
+      (most-overdue-first, justification withheld); `recall.rs` `grade_review` reveals the why
+      only after a committed self-grade and records the rep; `due_reviews`/`grade_review` commands.
 - [ ] **#15 "What to review" surface** — list the connections most often failed, driven by
       `recall_log`.
       touches: `src-tauri/src/index.rs`, `commands.rs`, `src/routes/+page.svelte` · blocked-by: #13

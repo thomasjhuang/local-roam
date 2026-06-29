@@ -7,7 +7,7 @@
 //! guess list is a valid "give up" — it reveals everything and logs every backlink
 //! as a failed recall.
 
-use crate::index::{Backlink, Index};
+use crate::index::{self, Backlink, Index};
 use anyhow::Result;
 use serde::Serialize;
 
@@ -62,6 +62,40 @@ pub fn submit_guesses(index: &Index, note_id: &str, guesses: &[String]) -> Resul
         missed,
         spurious,
         reveal: actual,
+    })
+}
+
+/// The feedback from grading one spaced-repetition review.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct ReviewReveal {
+    /// The justification, revealed only *after* the user committed their self-grade.
+    pub why: String,
+    /// Recall strength after recording this rep.
+    pub recall_strength: f64,
+    /// Days until this edge becomes due for review again.
+    pub next_interval_days: f64,
+}
+
+/// Grade a spaced-repetition review of the A→B edge. `recalled` is the user's
+/// self-assessment, committed *before* the justification is revealed — you cannot peek
+/// and then claim you knew it. Recording the rep reschedules the edge (via its new
+/// strength) and feeds the "what to review" failure stats; the stored justification is
+/// then returned as feedback. Errors if the edge no longer exists.
+pub fn grade_review(
+    index: &Index,
+    from_id: &str,
+    to_id: &str,
+    recalled: bool,
+) -> Result<ReviewReveal> {
+    let (why, _) = index
+        .edge(from_id, to_id)?
+        .ok_or_else(|| anyhow::anyhow!("no such edge to review"))?;
+    index.record_recall(from_id, to_id, recalled)?;
+    let strength = index.edge(from_id, to_id)?.map(|(_, s)| s).unwrap_or(0.0);
+    Ok(ReviewReveal {
+        why,
+        recall_strength: strength,
+        next_interval_days: index::review_interval_days(strength),
     })
 }
 
@@ -124,6 +158,27 @@ mod tests {
         assert_eq!(r.reveal.len(), 2);
         // failure weakened (clamped at 0, started at 0).
         assert_eq!(idx.backlinks(&b).unwrap().iter().find(|x| x.from_id == a).unwrap().recall_strength, 0.0);
+    }
+
+    #[test]
+    fn grade_review_reveals_justification_and_reschedules() {
+        let (_d, idx, a, c, b) = setup();
+
+        // A correct review: reveals the reason, strengthens, lengthens the interval.
+        let rev = grade_review(&idx, &a, &b, true).unwrap();
+        assert_eq!(rev.why, "reason a");
+        assert_eq!(rev.recall_strength, 1.0);
+        assert_eq!(rev.next_interval_days, 2.0);
+
+        // A miss reveals the reason too, but weakens it (clamped at 0) — logged as a
+        // failure so it resurfaces sooner and feeds "what to review".
+        let rev2 = grade_review(&idx, &c, &b, false).unwrap();
+        assert_eq!(rev2.why, "reason c");
+        assert_eq!(rev2.recall_strength, 0.0);
+        assert_eq!(rev2.next_interval_days, 1.0);
+
+        // Reviewing a non-existent edge errors rather than revealing nothing.
+        assert!(grade_review(&idx, &a, "no-such-id", true).is_err());
     }
 
     #[test]

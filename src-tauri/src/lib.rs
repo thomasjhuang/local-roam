@@ -35,6 +35,8 @@ pub fn run() {
             commands::outgoing,
             commands::restore_link,
             commands::submit_recall,
+            commands::due_reviews,
+            commands::grade_review,
             commands::search,
         ])
         .run(tauri::generate_context!())

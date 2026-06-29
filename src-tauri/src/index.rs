@@ -9,7 +9,7 @@
 use crate::vault::{Note, Vault};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 
 /// Days of non-exercise after which an edge is considered fully faded (decay == 1.0).
@@ -27,6 +27,40 @@ pub fn decay(last_recalled: Option<&str>, now: DateTime<Utc>) -> f64 {
     };
     let elapsed_days = (now - then.with_timezone(&Utc)).num_seconds() as f64 / 86_400.0;
     (elapsed_days / DECAY_HORIZON_DAYS).clamp(0.0, 1.0)
+}
+
+/// Spaced-repetition schedule. Each net-successful recall roughly doubles the wait
+/// before a connection is surfaced for review again (SM-2-style geometric backoff):
+/// well-known links are quizzed rarely, shaky ones often.
+const REVIEW_BASE_DAYS: f64 = 1.0;
+const REVIEW_EASE: f64 = 2.0;
+
+/// Days to wait before re-quizzing an edge of the given recall strength.
+pub fn review_interval_days(recall_strength: f64) -> f64 {
+    REVIEW_BASE_DAYS * REVIEW_EASE.powf(recall_strength.max(0.0))
+}
+
+/// Whether an edge is due for a spaced-repetition review now. A never-exercised edge
+/// (no timestamp) is always due.
+pub fn is_due(recall_strength: f64, last_recalled: Option<&str>, now: DateTime<Utc>) -> bool {
+    review_overdue_ratio(recall_strength, last_recalled, now) >= 1.0
+}
+
+/// How overdue an edge is as a multiple of its interval: 1.0 = exactly due, >1.0 =
+/// overdue, <1.0 = not yet due, ∞ = never exercised. Ranks the review queue.
+fn review_overdue_ratio(
+    recall_strength: f64,
+    last_recalled: Option<&str>,
+    now: DateTime<Utc>,
+) -> f64 {
+    let Some(ts) = last_recalled else {
+        return f64::INFINITY;
+    };
+    let Ok(then) = DateTime::parse_from_rfc3339(ts) else {
+        return f64::INFINITY;
+    };
+    let elapsed_days = (now - then.with_timezone(&Utc)).num_seconds() as f64 / 86_400.0;
+    elapsed_days / review_interval_days(recall_strength)
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -47,6 +81,19 @@ pub struct Backlink {
     pub last_recalled: Option<String>,
     /// 0.0 (fresh) … 1.0 (fully faded). See [`decay`].
     pub decay: f64,
+}
+
+/// An edge due for a spaced-repetition review. Carries only the endpoints — the
+/// justification is withheld until the user commits a self-graded answer, preserving
+/// recall-before-reveal.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct DueReview {
+    pub from_id: String,
+    pub from_title: String,
+    pub to_id: String,
+    pub to_title: String,
+    pub recall_strength: f64,
+    pub last_recalled: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -317,6 +364,55 @@ impl Index {
         Ok(())
     }
 
+    /// Edges whose spaced-repetition schedule says they are due for review now, most
+    /// overdue first. The justification is deliberately omitted — see [`DueReview`].
+    pub fn due_reviews(&self) -> Result<Vec<DueReview>> {
+        let now = Utc::now();
+        let mut stmt = self.conn.prepare(
+            "SELECT e.from_id, f.title, e.to_id, t.title, e.recall_strength, e.last_recalled
+             FROM edges e
+             JOIN nodes f ON f.id = e.from_id
+             JOIN nodes t ON t.id = e.to_id",
+        )?;
+        let mut due: Vec<(DueReview, f64)> = stmt
+            .query_map([], |r| {
+                let recall_strength: f64 = r.get(4)?;
+                let last_recalled: Option<String> = r.get(5)?;
+                let ratio = review_overdue_ratio(recall_strength, last_recalled.as_deref(), now);
+                Ok((
+                    DueReview {
+                        from_id: r.get(0)?,
+                        from_title: r.get(1)?,
+                        to_id: r.get(2)?,
+                        to_title: r.get(3)?,
+                        recall_strength,
+                        last_recalled,
+                    },
+                    ratio,
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .filter(|(_, ratio)| *ratio >= 1.0)
+            .collect();
+        // Most overdue first.
+        due.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(due.into_iter().map(|(d, _)| d).collect())
+    }
+
+    /// The stored justification and current recall strength for a single edge, if it
+    /// exists. Used to reveal + reschedule one connection during a review.
+    pub fn edge(&self, from_id: &str, to_id: &str) -> Result<Option<(String, f64)>> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT justification, recall_strength FROM edges WHERE from_id=?1 AND to_id=?2",
+                rusqlite::params![from_id, to_id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)),
+            )
+            .optional()?;
+        Ok(row)
+    }
+
     /// Full-text-ish search over title, aliases and body. The deliberate escape hatch.
     pub fn search(&self, query: &str) -> Result<Vec<NodeMeta>> {
         let q = query.trim();
@@ -465,6 +561,69 @@ mod tests {
 
         // Restoring a non-existent edge is an error, not a silent no-op.
         assert!(idx.restore_edge(&a_id, "no-such-id").is_err());
+    }
+
+    #[test]
+    fn review_interval_grows_with_strength() {
+        assert_eq!(review_interval_days(0.0), 1.0);
+        assert_eq!(review_interval_days(1.0), 2.0);
+        assert_eq!(review_interval_days(3.0), 8.0);
+    }
+
+    #[test]
+    fn is_due_respects_the_schedule() {
+        let now = DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        // Never exercised → always due.
+        assert!(is_due(5.0, None, now));
+        // Strength 0 (1-day interval): not due at 12h, due at 2 days.
+        let twelve_h = (now - chrono::Duration::hours(12)).to_rfc3339();
+        assert!(!is_due(0.0, Some(&twelve_h), now));
+        let two_days = (now - chrono::Duration::days(2)).to_rfc3339();
+        assert!(is_due(0.0, Some(&two_days), now));
+        // Strength 3 (8-day interval): not due at 5 days, due at 9.
+        let five = (now - chrono::Duration::days(5)).to_rfc3339();
+        assert!(!is_due(3.0, Some(&five), now));
+        let nine = (now - chrono::Duration::days(9)).to_rfc3339();
+        assert!(is_due(3.0, Some(&nine), now));
+    }
+
+    #[test]
+    fn due_reviews_lists_overdue_edges_most_overdue_first() {
+        // Two edges into the same target: A->B (strength 0) and C->B (strength 3).
+        let dir = TempDir::new().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let b = v.create_note("B", vec![], vec![], vec![], "").unwrap();
+        let mut a = v.create_note("A", vec![], vec![], vec![], "").unwrap();
+        let mut c = v.create_note("C", vec![], vec![], vec![], "").unwrap();
+        a.links.push(Link { to: b.id.clone(), why: "a why".into() });
+        c.links.push(Link { to: b.id.clone(), why: "c why".into() });
+        v.write_note(&a).unwrap();
+        v.write_note(&c).unwrap();
+        let idx = Index::open_in_memory().unwrap();
+        idx.rebuild_from_vault(&v).unwrap();
+
+        // Freshly created edges (last_recalled = now) are not yet due.
+        assert!(idx.due_reviews().unwrap().is_empty());
+
+        // A: 3 days stale, strength 0 (interval 1d) → 3x overdue.
+        // C: 10 days stale, strength 3 (interval 8d) → 1.25x overdue.
+        let a_old = (Utc::now() - chrono::Duration::days(3)).to_rfc3339();
+        let c_old = (Utc::now() - chrono::Duration::days(10)).to_rfc3339();
+        idx.conn
+            .execute("UPDATE edges SET last_recalled=?1, recall_strength=0 WHERE from_id=?2", rusqlite::params![a_old, a.id])
+            .unwrap();
+        idx.conn
+            .execute("UPDATE edges SET last_recalled=?1, recall_strength=3 WHERE from_id=?2", rusqlite::params![c_old, c.id])
+            .unwrap();
+
+        let due = idx.due_reviews().unwrap();
+        assert_eq!(due.len(), 2);
+        assert_eq!(due[0].from_id, a.id, "more-overdue A ranks first");
+        assert_eq!(due[1].from_id, c.id);
+        // Justification is withheld from the queue.
+        assert_eq!(due[0].to_title, "B");
     }
 
     #[test]

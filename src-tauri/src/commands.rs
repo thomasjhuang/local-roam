@@ -1,9 +1,9 @@
 //! Tauri command layer — thin glue exposing the deep modules to the frontend.
 //! Intentionally shallow; not unit-tested (the logic lives in the modules below it).
 
-use crate::index::{NodeMeta, OutLink};
+use crate::index::{DueReview, NodeMeta, OutLink};
 use crate::linker::{self, Resolution};
-use crate::recall::{self, RecallResult};
+use crate::recall::{self, RecallResult, ReviewReveal};
 use crate::state::{AppState, OpenVault};
 use crate::vault::Note;
 use tauri::State;
@@ -140,6 +140,27 @@ pub fn submit_recall(
 ) -> Result<RecallResult, String> {
     with_vault(&state, |ov| {
         recall::submit_guesses(&ov.index, &note_id, &guesses)
+    })
+}
+
+/// Edges due for a spaced-repetition review, most overdue first. Justifications are
+/// withheld — see `grade_review`.
+#[tauri::command]
+pub fn due_reviews(state: State<AppState>) -> Result<Vec<DueReview>, String> {
+    with_vault(&state, |ov| ov.index.due_reviews())
+}
+
+/// Grade a review of the A→B connection. `recalled` is the user's self-assessment,
+/// committed before the justification is revealed; recording it reschedules the edge.
+#[tauri::command]
+pub fn grade_review(
+    state: State<AppState>,
+    from_id: String,
+    to_id: String,
+    recalled: bool,
+) -> Result<ReviewReveal, String> {
+    with_vault(&state, |ov| {
+        recall::grade_review(&ov.index, &from_id, &to_id, recalled)
     })
 }
 
