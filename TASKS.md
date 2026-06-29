@@ -63,8 +63,9 @@ This file on `main` is the single source of truth for what's done — future kic
 - [ ] **#15 "What to review" surface** — list the connections most often failed, driven by
       `recall_log`.
       touches: `src-tauri/src/index.rs`, `commands.rs`, `src/routes/+page.svelte` · blocked-by: #13
-- [ ] **#16 CodeMirror Markdown editor** — replace the body `<textarea>` with CodeMirror +
-      `[[wiki-link]]` rendering. Do NOT add link autocomplete (see `CONTEXT.md`).
+- [x] **#16 CodeMirror Markdown editor** — replaced the body `<textarea>` with CodeMirror +
+      display-only `[[wiki-link]]` rendering. NO link autocomplete (see `CONTEXT.md`); linking
+      still goes through the "Link from memory" flow. — `src/lib/Editor.svelte` (f024a2c)
       touches: `package.json`, `src/lib/Editor.svelte` (new), `src/routes/+page.svelte` (1 line)
       · blocked-by: none
 - [ ] **#17 Draw-the-edges graph** — user reconstructs the edges from memory, then it's scored
