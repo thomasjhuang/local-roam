@@ -104,7 +104,7 @@ notes, never edges; tag browsing is an escape hatch, not the default path.
 - [x] **#18b Daily/fleeting notes** — a dated quick-capture note; reuses the template logic.
       touches: `src-tauri/src/daily.rs` (new), `commands.rs`, `lib.rs`, `api.ts`, capture sub-route
       · blocked-by: #18a
-- [ ] **#18c Tags-as-navigation** — browse notes by tag behind a disclosure, modelled on the
+- [x] **#18c Tags-as-navigation** — browse notes by tag behind a disclosure, modelled on the
       #11 search escape hatch (present but unglamorous; never the default path).
       touches: read-only tag query in `src-tauri/src/index.rs`, `commands.rs`, `lib.rs`, `api.ts`,
       tags panel/route · blocked-by: #18-wave0

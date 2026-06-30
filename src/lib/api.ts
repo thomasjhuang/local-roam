@@ -43,6 +43,12 @@ export interface RecallResult {
   reveal: Backlink[];
 }
 
+/** A tag and how many notes carry it (#18c). For the tag-browsing escape hatch. */
+export interface TagCount {
+  tag: string;
+  count: number;
+}
+
 /** A built-in new-note body skeleton (#18a). Structure only — never edges. */
 export interface Template {
   id: string;
@@ -82,6 +88,13 @@ export const api = {
   search: (query: string) => invoke<NodeMeta[]>("search", { query }),
   /** Connections most often failed in recall, most-failed first. Justification withheld. */
   whatToReview: (limit: number) => invoke<FailedConnection[]>("what_to_review", { limit }),
+  /**
+   * Tag-browsing escape hatch (#18c). Navigation only — like `search` above, present
+   * but never the default path; browsing a tag surfaces existing notes, never creating
+   * a note or an edge.
+   */
+  listTags: () => invoke<TagCount[]>("list_tags"),
+  notesByTag: (tag: string) => invoke<NodeMeta[]>("notes_by_tag", { tag }),
 
   /**
    * Capture namespace — features that *create notes* (templates, daily notes, imports,

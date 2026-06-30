@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { api, type FailedConnection, type NodeMeta, type Note, type OutLink, type RecallResult } from "$lib/api";
+  import { api, type FailedConnection, type NodeMeta, type Note, type OutLink, type RecallResult, type TagCount } from "$lib/api";
   import Editor from "$lib/Editor.svelte";
 
   // --- vault ---
@@ -40,6 +40,12 @@
   let searchOpen = $state(false);
   let searchQuery = $state("");
   let searchResults = $state<NodeMeta[]>([]);
+
+  // --- tags (navigation escape hatch, #18c) — like search: present, not the default ---
+  let tagsOpen = $state(false);
+  let allTags = $state<TagCount[]>([]);
+  let activeTag = $state("");
+  let tagNotes = $state<NodeMeta[]>([]);
 
   // --- what to review (the connections you fail most) ---
   let reviewItems = $state<FailedConnection[]>([]);
@@ -200,6 +206,18 @@
   async function runSearch() {
     searchResults = searchQuery.trim() ? await api.search(searchQuery) : [];
   }
+
+  // ---- tags (navigation escape hatch) ----
+  async function toggleTags() {
+    tagsOpen = !tagsOpen;
+    activeTag = "";
+    tagNotes = [];
+    if (tagsOpen) allTags = await api.listTags(); // re-fetch on open so counts stay fresh
+  }
+  async function browseTag(tag: string) {
+    activeTag = tag;
+    tagNotes = await api.notesByTag(tag);
+  }
 </script>
 
 <svelte:head><title>local-roam</title></svelte:head>
@@ -273,6 +291,36 @@
               <li><button onclick={() => selectNote(r.id)}>{r.title}</button></li>
             {/each}
           </ul>
+        {/if}
+      </div>
+
+      <div class="tagsnav">
+        <button class="ghost small" onclick={toggleTags}>
+          {tagsOpen ? "▾" : "▸"} browse by tag
+        </button>
+        {#if tagsOpen}
+          <p class="sub tiny">An escape hatch, like search — not how you'd normally find a note.</p>
+          {#if !allTags.length}
+            <p class="empty-line">No tags yet.</p>
+          {:else}
+            <ul class="tagchips">
+              {#each allTags as t (t.tag)}
+                <li>
+                  <button class="tagchip" class:active={t.tag === activeTag} onclick={() => browseTag(t.tag)}>
+                    {t.tag}<span class="count">{t.count}</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+            {#if activeTag}
+              <ul>
+                {#each tagNotes as n (n.id)}
+                  <li><button onclick={() => selectNote(n.id)}>{n.title}</button></li>
+                {/each}
+                {#if !tagNotes.length}<li class="empty-line">No notes tagged “{activeTag}”.</li>{/if}
+              </ul>
+            {/if}
+          {/if}
         {/if}
       </div>
     </aside>
@@ -430,4 +478,11 @@
   .reviewlist li { display: flex; gap: .5rem; align-items: baseline; justify-content: space-between; }
   .reviewlist .linkbtn { white-space: normal; text-align: left; }
   .fail { color: #e0a0a0; font-size: .72rem; white-space: nowrap; }
+  .tiny { font-size: .72rem; margin: .2rem 0 .4rem; }
+  .empty-line { color: #6b7178; font-size: .8rem; padding: .2rem 0; list-style: none; }
+  .tagchips { list-style: none; display: flex; flex-wrap: wrap; gap: .3rem; padding: 0; margin: .2rem 0 .4rem; }
+  .tagchip { background: #232830; color: #c8cdd3; border: none; border-radius: 12px; padding: .15rem .55rem; font-size: .78rem; cursor: pointer; display: inline-flex; align-items: baseline; gap: .3rem; }
+  .tagchip:hover { background: #2c333d; }
+  .tagchip.active { background: #1a2230; color: #8fb8ff; box-shadow: inset 0 0 0 1px #3b6ea5; }
+  .tagchip .count { font-size: .65rem; color: #8a9099; }
 </style>

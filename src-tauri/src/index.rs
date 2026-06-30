@@ -109,6 +109,15 @@ pub struct FailedConnection {
     pub attempts: i64,
 }
 
+/// A tag and how many notes carry it, for the tag-browsing escape hatch (#18c).
+/// Navigation only — like search, it points you at existing notes; it never creates
+/// a note or an edge.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct TagCount {
+    pub tag: String,
+    pub count: usize,
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct OutLink {
     pub to_id: String,
@@ -148,6 +157,7 @@ impl Index {
                 title   TEXT NOT NULL,
                 aliases TEXT NOT NULL DEFAULT '[]',
                 refs    TEXT NOT NULL DEFAULT '[]',
+                tags    TEXT NOT NULL DEFAULT '[]',
                 body    TEXT NOT NULL DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS edges (
@@ -166,7 +176,25 @@ impl Index {
                 ts      TEXT NOT NULL
             );",
         )?;
+        // Back-fill the tags column on indexes created before #18c. Idempotent: the
+        // column is added only if missing, so re-opening an already-migrated index is a
+        // no-op. The tags themselves repopulate on the next `rebuild_from_vault`.
+        if !self.column_exists("nodes", "tags")? {
+            self.conn
+                .execute("ALTER TABLE nodes ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'", [])?;
+        }
         Ok(())
+    }
+
+    /// Whether `table` already has a column named `column`. Used to make schema
+    /// back-fills idempotent.
+    fn column_exists(&self, table: &str, column: &str) -> Result<bool> {
+        let mut stmt = self.conn.prepare(&format!("PRAGMA table_info({table})"))?;
+        let found = stmt
+            .query_map([], |r| r.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .any(|name| name == column);
+        Ok(found)
     }
 
     /// Sync the index to match the vault, preserving recall telemetry on edges that
@@ -205,16 +233,17 @@ impl Index {
     /// telemetry on edges that already existed.
     pub fn reindex_note(&self, note: &Note) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO nodes (id, title, aliases, refs, body)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO nodes (id, title, aliases, refs, tags, body)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title, aliases=excluded.aliases,
-                refs=excluded.refs, body=excluded.body",
+                refs=excluded.refs, tags=excluded.tags, body=excluded.body",
             rusqlite::params![
                 note.id,
                 note.title,
                 serde_json::to_string(&note.aliases)?,
                 serde_json::to_string(&note.refs)?,
+                serde_json::to_string(&note.tags)?,
                 note.body,
             ],
         )?;
@@ -477,6 +506,62 @@ impl Index {
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
+
+    /// Every distinct tag in the vault with its note count, most-used first (ties
+    /// broken alphabetically). The tag-browsing escape hatch (#18c): read-only, like
+    /// search — it surveys what exists, it never creates a note or an edge.
+    pub fn tags(&self) -> Result<Vec<TagCount>> {
+        let mut stmt = self.conn.prepare("SELECT tags FROM nodes")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for tags_json in rows.filter_map(|r| r.ok()) {
+            for tag in parse_json_vec(&tags_json) {
+                let tag = tag.trim().to_string();
+                if !tag.is_empty() {
+                    *counts.entry(tag).or_default() += 1;
+                }
+            }
+        }
+        let mut out: Vec<TagCount> = counts
+            .into_iter()
+            .map(|(tag, count)| TagCount { tag, count })
+            .collect();
+        out.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| a.tag.to_lowercase().cmp(&b.tag.to_lowercase()))
+        });
+        Ok(out)
+    }
+
+    /// The notes carrying a given tag (exact, trimmed, case-insensitive), title-sorted.
+    /// Read-only navigation: it lists existing notes, never creating one. Matching is
+    /// exact so `ml` never bleeds into `html`.
+    pub fn notes_with_tag(&self, tag: &str) -> Result<Vec<NodeMeta>> {
+        let needle = tag.trim().to_lowercase();
+        if needle.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, aliases, refs, tags FROM nodes ORDER BY title COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                NodeMeta {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    aliases: parse_json_vec(&r.get::<_, String>(2)?),
+                    refs: parse_json_vec(&r.get::<_, String>(3)?),
+                },
+                parse_json_vec(&r.get::<_, String>(4)?),
+            ))
+        })?;
+        Ok(rows
+            .filter_map(|r| r.ok())
+            .filter(|(_, tags)| tags.iter().any(|t| t.trim().to_lowercase() == needle))
+            .map(|(node, _)| node)
+            .collect())
+    }
 }
 
 fn parse_json_vec(s: &str) -> Vec<String> {
@@ -716,5 +801,69 @@ mod tests {
         assert_eq!(idx.search("moment").unwrap().len(), 1);
         assert_eq!(idx.search("Adam").unwrap().len(), 1);
         assert_eq!(idx.search("nonexistent").unwrap().len(), 0);
+    }
+
+    #[test]
+    fn tags_counts_and_notes_by_tag_filters_exactly() {
+        let dir = TempDir::new().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        v.create_note("A", vec![], vec![], vec!["ml".into(), "nlp".into()], "").unwrap();
+        v.create_note("B", vec![], vec![], vec!["ml".into()], "").unwrap();
+        v.create_note("C", vec![], vec![], vec!["html".into()], "").unwrap();
+        let idx = Index::open_in_memory().unwrap();
+        idx.rebuild_from_vault(&v).unwrap();
+
+        // Counted, most-used first; ties broken alphabetically (html before nlp).
+        let tags = idx.tags().unwrap();
+        assert_eq!(tags[0], TagCount { tag: "ml".into(), count: 2 });
+        assert_eq!(
+            tags.iter().map(|t| t.tag.as_str()).collect::<Vec<_>>(),
+            vec!["ml", "html", "nlp"],
+        );
+
+        // Exact match: "ml" must NOT bleed into "html".
+        let ml = idx.notes_with_tag("ml").unwrap();
+        assert_eq!(ml.iter().map(|n| n.title.as_str()).collect::<Vec<_>>(), vec!["A", "B"]);
+        assert_eq!(idx.notes_with_tag("  ML ").unwrap().len(), 2, "trimmed + case-insensitive");
+        assert_eq!(idx.notes_with_tag("html").unwrap().len(), 1);
+        assert!(idx.notes_with_tag("missing").unwrap().is_empty());
+        assert!(idx.notes_with_tag("  ").unwrap().is_empty());
+    }
+
+    #[test]
+    fn tags_repopulate_after_a_rebuild() {
+        let (_d, v, a_id, _b) = fixture();
+        let idx = Index::open_in_memory().unwrap();
+        idx.rebuild_from_vault(&v).unwrap();
+        assert!(idx.tags().unwrap().is_empty(), "fixture notes start untagged");
+
+        // Tag a note, re-sync: the index reflects the new tag.
+        let mut a = v.read_note(&a_id).unwrap();
+        a.tags = vec!["seminal".into()];
+        v.write_note(&a).unwrap();
+        idx.rebuild_from_vault(&v).unwrap();
+        assert_eq!(idx.tags().unwrap(), vec![TagCount { tag: "seminal".into(), count: 1 }]);
+        assert_eq!(idx.notes_with_tag("seminal").unwrap()[0].id, a_id);
+    }
+
+    #[test]
+    fn migrate_backfills_tags_column_on_pre_18c_indexes() {
+        // An index created before #18c has a nodes table without the tags column.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE nodes (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL,
+                aliases TEXT NOT NULL DEFAULT '[]', refs TEXT NOT NULL DEFAULT '[]',
+                body TEXT NOT NULL DEFAULT ''
+            );",
+        )
+        .unwrap();
+        let idx = Index { conn };
+        assert!(!idx.column_exists("nodes", "tags").unwrap());
+
+        idx.migrate().unwrap(); // adds the column
+        assert!(idx.column_exists("nodes", "tags").unwrap());
+        idx.migrate().unwrap(); // idempotent: a second migrate is a no-op
+        assert!(idx.tags().unwrap().is_empty());
     }
 }

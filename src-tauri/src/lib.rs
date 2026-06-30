@@ -44,6 +44,8 @@ pub fn run() {
             commands::grade_review,
             commands::what_to_review,
             commands::search,
+            commands::list_tags,
+            commands::notes_by_tag,
             // capture bundle (#18): each slice appends its command(s) here, append-only.
             commands::list_templates,
             commands::create_from_template,

@@ -1,7 +1,7 @@
 //! Tauri command layer — thin glue exposing the deep modules to the frontend.
 //! Intentionally shallow; not unit-tested (the logic lives in the modules below it).
 
-use crate::index::{DueReview, FailedConnection, NodeMeta, OutLink};
+use crate::index::{DueReview, FailedConnection, NodeMeta, OutLink, TagCount};
 use crate::linker::{self, Resolution};
 use crate::recall::{self, RecallResult, ReviewReveal};
 use crate::state::{AppState, OpenVault};
@@ -181,6 +181,21 @@ pub fn what_to_review(
 #[tauri::command]
 pub fn search(state: State<AppState>, query: String) -> Result<Vec<NodeMeta>, String> {
     with_vault(&state, |ov| ov.index.search(&query))
+}
+
+/// Every tag with its note count, for the tag-browsing escape hatch (#18c). Like
+/// `search`, this is navigation only — present but not the default path; it never
+/// creates a note or an edge.
+#[tauri::command]
+pub fn list_tags(state: State<AppState>) -> Result<Vec<TagCount>, String> {
+    with_vault(&state, |ov| ov.index.tags())
+}
+
+/// The notes carrying a tag (exact, case-insensitive). Browsing, not capture: it
+/// surfaces existing notes and creates nothing.
+#[tauri::command]
+pub fn notes_by_tag(state: State<AppState>, tag: String) -> Result<Vec<NodeMeta>, String> {
+    with_vault(&state, |ov| ov.index.notes_with_tag(&tag))
 }
 
 // --- capture bundle (#18): commands that create notes, never edges ---------------
