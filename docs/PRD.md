@@ -1,5 +1,10 @@
 # PRD: local-roam — a forced-memory research notebook
 
+> **SUPERSEDED (2026-07-01).** This PRD specified the v1 "productive friction" app, which
+> shipped in full (#1–#20). The project then pivoted away from the recall thesis entirely —
+> see `CONTEXT.md` ("The pivot") and the v3 section of `TASKS.md`. Kept unedited as the
+> historical record of what v1 was; do not implement against it.
+
 > Working name: **local-roam**. A standalone, local-first macOS app for one user (the
 > author) to build and *internalize* the connections between ML research papers and ideas.
 > Unlike org-roam / Obsidian, which optimize for frictionless capture and retrieval, this

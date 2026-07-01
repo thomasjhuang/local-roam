@@ -148,3 +148,70 @@ pick-list (CONTEXT.md ban on candidate lists), and flipping must reuse the exact
       but never across sessions. No new Tauri commands.
       touches: `src/lib/LinkCarousel.svelte` (new), `src/routes/+page.svelte` (link flow)
       · blocked-by: #20a
+
+## v3 — The Archive pivot (2026-07-01)
+
+**Direction change, decided by the owner.** The productive-friction / recall thesis behind
+#9–#10, #13–#15, #17 and #20 is retired — see the rewritten `CONTEXT.md` ("The pivot").
+The app becomes a close cousin of **The Archive** (nimble, calm, plain text, search-first,
+autocomplete where it helps) with one differentiator: every note can map to a document
+(arXiv id / DOI / PDF) that is always one keystroke away. Recall gates, quizzes, decay,
+and mandatory justifications are **removed**, not preserved. Old thesis guardrails in the
+sections above are void; they remain only as history.
+
+- [ ] **#21 Remove the recall machinery** — delete `recall.rs` (guess scoring, review
+      grading), decay/SM-2/`recall_log` in `index.rs`, the `what_to_review`/`due_reviews`/
+      `grade_review`/`restore_link` commands, the `/graph` reconstruction quiz, the flip-to-
+      recall carousel, and the recall gate on backlinks — backlinks render instantly.
+      `linker.rs`: drop the justification requirement and the 140-char cap (simple title
+      resolve stays as a stopgap until #23 replaces linking wholesale). All tests green after
+      the cut; `rebuild_from_vault` migrates existing indexes (recall columns dropped).
+      touches: `src-tauri/src/recall.rs` (delete), `index.rs`, `linker.rs`, `commands.rs`,
+      `lib.rs`, `api.ts`, `src/routes/+page.svelte`, `src/routes/graph/` (delete),
+      `src/lib/Graph.svelte` (delete), `src/lib/LinkCarousel.svelte` (delete) · blocked-by: none
+
+- [ ] **#22 Omnibar** — The Archive's core loop: one field; typing searches title/alias/body
+      as you type (ranked: title prefix, then alias, then body); Return opens the top hit or
+      creates a note titled with the query when nothing matches; the sidebar note list *is*
+      the live result list (all notes, newest first, when the field is empty). Retires the
+      separate search disclosure and the new-note mini-form.
+      touches: `src/routes/+page.svelte`, `src-tauri/src/index.rs` (ranking), `commands.rs`,
+      `lib.rs`, `api.ts` · blocked-by: #21
+
+- [ ] **#23 Wiki-links in prose as the linking model** — `[[...]]` typed in the body
+      autocompletes over titles/aliases/ids; click follows the link; a link to a nonexistent
+      note prefills the omnibar to create it. The index derives edges by parsing body
+      wiki-links on reindex. One-time migration: append each legacy frontmatter link to the
+      body as `- [[Title]] — <why>` under a `## Links` heading (the written whys survive as
+      prose), then drop the frontmatter `links` field. Backlinks display the sentence around
+      the link (link context).
+      touches: `src/lib/Editor.svelte`, `src-tauri/src/vault.rs`, `index.rs`, `linker.rs`
+      (retire), `commands.rs`, `api.ts` · blocked-by: #21
+      (⚠ shares `index.rs`/`commands.rs`/`+page.svelte` with #22 — same lane, run after #22)
+
+- [ ] **#24a Frictionless paper capture** — paste an arXiv URL/id or drop a PDF → note
+      auto-created with fetched title, authors, abstract, and a citekey ref; the PDF is
+      filed to `<vault>/literature/` and mapped to the note. No naming gate, no required
+      idea sentence (the generation-effect gate is retired). Reuses `bibtex.rs` + `sources.rs`.
+      touches: `src-tauri/src/sources.rs`, `bibtex.rs`, `commands.rs`, `lib.rs`, `api.ts`,
+      `src/routes/library/` · blocked-by: #21 (parallel with #22/#23 — different lane)
+
+- [ ] **#24b The paper pane** — the mapped document always one keystroke away: ⌘O and a
+      toolbar button open the note's PDF; a toggleable split pane renders the PDF inline
+      beside the editor so you read and write side by side; an arXiv ref without a local
+      PDF offers fetch-and-file.
+      touches: `src/lib/PdfPane.svelte` (new), `src/routes/+page.svelte`,
+      `src-tauri/src/sources.rs` (fetch/open), `commands.rs`, `lib.rs`, `api.ts` · blocked-by: #24a
+
+- [ ] **#24c literature.bib** — maintain `<vault>/literature/literature.bib` generated from
+      paper notes' refs (citekey, title, authors, year, arXiv id); `[#citekey]` in prose
+      renders as a citation; clicking it jumps to the paper note or opens its PDF. Capture
+      appends the full citation line to the note body so every note stays self-contained.
+      touches: `src-tauri/src/bibtex.rs`, `index.rs` (citekey lookup), `src/lib/Editor.svelte`,
+      `api.ts` · blocked-by: #24a, #23
+
+- [ ] **#25 Archive polish** — timestamp ids (`YYYYMMDDHHmm`) for new notes (existing uuid
+      ids stay valid forever); clickable `#hashtags` run an omnibar search; saved searches
+      pinned in the sidebar; typewriter-mode toggle.
+      touches: `src-tauri/src/vault.rs` (id gen), `src/lib/Editor.svelte`,
+      `src/routes/+page.svelte`, `settings.rs` · blocked-by: #22

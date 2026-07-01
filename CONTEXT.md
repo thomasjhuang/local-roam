@@ -1,82 +1,78 @@
 # CONTEXT — local-roam
 
-> Read this before changing anything. The whole point of this app is unusual, and the
-> easy "improvement" is almost always the wrong one.
+> Read this before changing anything. **This file was rewritten on 2026-07-01 in a
+> deliberate pivot** — if you remember an older thesis about "productive friction" and
+> recall gates, that thesis is retired. Do not rebuild it.
 
 ## What this is
 
-A standalone, local-first macOS notebook for **one user** to deeply internalize how ML
-research papers and ideas connect. It is an org-roam / Zettelkasten descendant, but with an
-inverted goal.
+A standalone, local-first macOS Zettelkasten for **one user** to think and write about ML
+research — modeled closely on [The Archive](https://zettelkasten.de/the-archive/) (nimble,
+calm, plain text), with one differentiator The Archive doesn't have: **the papers live
+inside it.** Every note can be mapped to a document (arXiv id, DOI, local PDF), and the
+mapped document is always one keystroke away.
 
-## The thesis (do not violate this)
+## The pivot (2026-07-01) — read this if you knew the old app
 
-Every mainstream knowledge tool — Obsidian, Roam, org-roam — optimizes for *frictionless*
-capture and retrieval. The tool remembers, so the user doesn't have to. The result is a
-browsable database the user doesn't actually *know*.
+v1/v2 (issues #1–#20) was built on an inverted thesis: the tool refused to remember for
+you — no autocomplete, links typed from memory, backlinks hidden behind recall quizzes,
+spaced repetition over edges, a flip-to-recall carousel. **All of that is retired.** The
+owner's verdict after living with it: the recall gates were friction without joy — Anki
+bolted onto a notebook. The Zettelkasten orthodoxy was right all along: the box is a
+*thinking partner*; it remembers so you can think.
 
-local-roam optimizes for the opposite: **the tool refuses to remember for you, so your brain
-has to.** The friction is the product. It is grounded in learning science — desirable
-difficulty, the generation effect, retrieval practice, elaborative interrogation — not in
-arbitrary slowness.
+Concretely retired (remove on sight, never reintroduce):
 
-**Design rule:** anywhere a conventional tool would do the remembering for the user
-(autocomplete, instant backlinks, an auto-drawn graph), local-roam instead makes the user
-*reproduce it from memory first*, and reveals the answer only afterward as feedback.
+- Recall-before-reveal backlinks, guess scoring, recall telemetry, "what to review".
+- Spaced repetition, link decay, re-justify-to-restore.
+- Exact-or-nothing link resolution and the no-autocomplete rule.
+- Mandatory per-edge justifications and the 140-char cap.
+- The draw-the-edges graph quiz and the flip-to-recall card carousel.
 
-Friction must be **productive** (forces encoding). A loading spinner teaches nothing and is
-banned. Typing a paper's title from memory teaches a lot and is the whole idea.
+**Banned going forward: any mechanic that quizzes the user, gates information behind
+recall, or adds friction in the name of learning.** If a feature makes the user prove
+they remember something before showing it, it is wrong for this app.
 
-## The two MVP mechanics
+## The thesis (new)
 
-1. **No-autocomplete, justified linking** (`linker.rs`). To link to another note you type its
-   title from memory — `resolve()` returns an exact match or nothing, and *never* a candidate
-   list. `commit_edge()` refuses an empty justification: no edge exists without a reason.
-2. **Recall-before-reveal backlinks** (`recall.rs`). Opening a note hides its backlinks;
-   `submit_guesses()` scores what you recalled, records a rep for every true backlink
-   (hit = success, miss = failure — both logged), then reveals.
+**Nimble, calm, plain text — and the paper is right there.**
 
-## Architecture (deep modules)
+1. **The tool remembers so you can think.** Frictionless capture, instant navigation,
+   autocomplete everywhere it helps. Insight comes from writing in your own words and
+   connecting ideas, not from being quizzed.
+2. **Search is the interface.** One omnibar: type to search; press Return to open the
+   match or create the note. The note list *is* the result list (The Archive's core loop).
+3. **Plain text is the only truth.** One note = one Markdown file. The SQLite index is a
+   rebuildable cache, nothing more. No lock-in, no proprietary anything; the vault must
+   remain usable in The Archive, Obsidian, or `grep`.
+4. **Links live in prose.** Connections are `[[wiki-links]]` written in the body, where
+   the surrounding sentence naturally says *why* (link context the Zettelkasten way —
+   encouraged by convention, never enforced by a validator). Backlinks are computed and
+   shown instantly.
+5. **Read freely.** A paper note opens its PDF in one keystroke; capture of an arXiv id
+   or dropped PDF auto-fetches metadata (title, authors, abstract, citekey). Nothing
+   about reading or capturing ever asks the user to earn it.
 
-The vault (Markdown files) is the **single source of truth**. The SQLite index is a
-rebuildable cache + the home of recall *telemetry* only.
+## Architecture (deep modules — unchanged in spirit)
 
-- `vault.rs` — the only module that knows the file format. One note = one `<id>.md` file with
-  YAML frontmatter. The `id` never changes, so titles rename freely. Justified edges live in
-  the source note's frontmatter `links` list.
-- `index.rs` — SQLite mirror. `rebuild_from_vault` syncs without wiping recall telemetry.
-- `linker.rs` — mechanic #1.
-- `recall.rs` — mechanic #2.
+- `vault.rs` — the only module that knows the file format. One note = one `<id>.md` with
+  YAML frontmatter (`id`, `title`, `created`, `aliases`, `tags`, `refs`). The `id` never
+  changes; titles rename freely.
+- `index.rs` — SQLite mirror: nodes, body-derived links, backlinks, full-text search.
+  `rebuild_from_vault` restores everything; deleting the index loses nothing.
+- `sources.rs` / `bibtex.rs` / `clip.rs` / `daily.rs` / `templates.rs` — capture and the
+  document layer (the arXiv differentiator).
 - `commands.rs` / `state.rs` / `settings.rs` — thin Tauri glue (not unit-tested).
-
-Knowledge is in the files; if the index is deleted, only usage stats are lost.
 
 ## Things that look like bugs but are features
 
-- No fuzzy match / no autocomplete when linking. **Intentional.**
-- Backlinks are hidden until you guess. **Intentional.**
-- Full-text search exists but is buried under "escape hatch". **Intentional** — it must exist
-  (so a forgotten note isn't lost forever) but must not become the default path.
-
-## The reading layer (deliberate amendment, 2026-07-01)
-
-local-roam is a **recall-enforced Zettelkasten with the source PDFs living inside it**: a
-source is a note whose refs include a local PDF path (`sources.rs`, the library view).
-
-The thesis governs **connections, not document access**. Reading and locating a PDF is
-frictionless *by design* — browse the library, click, read in the system viewer; no recall
-gate. Do not "fix" this by gating reading, and do not use it to justify gating's opposite:
-the graph *around* a source (links, backlinks, the why of an edge) stays earned from memory.
-
-Ingest keeps its own productive friction: a dropped PDF becomes a source only after the user
-writes their **own name and one-sentence idea** for it (generation effect) — never the
-publisher filename, never an auto-fetched title handed over for free. Import creates a note,
-never an edge. And never add similarity-based "you might want to link…" suggestions to the
-library — a candidate list is a candidate list, wherever it appears.
-
-One line: **read freely, connect from memory.**
+- No cloud, no accounts, no sync engine — the vault is a folder; sync is the user's
+  cloud drive or git. **Intentional.**
+- The index can be deleted at any time. **Intentional** — it must always be rebuildable.
+- Feature restraint: The Archive's owners call extra features "distractions". When in
+  doubt, leave it out.
 
 ## Roadmap
 
-See `TASKS.md`. v2 builds on the recall telemetry already in the schema: draw-the-edges graph
-reconstruction, spaced-repetition over relationships, and link decay.
+See `TASKS.md` v3 section: #21 removes the recall machinery, #22 the omnibar, #23 body
+wiki-links as the linking model, #24 the arXiv document layer, #25 Archive polish.
