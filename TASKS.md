@@ -134,7 +134,7 @@ face-down until the user types the exact title from memory; it must never become
 pick-list (CONTEXT.md ban on candidate lists), and flipping must reuse the exact resolver
 (`resolve_link`), never a fuzzy match.
 
-- [ ] **#20a Tweet-constrained justification** — cap the edge `why` at 140 chars, enforced in
+- [x] **#20a Tweet-constrained justification** — cap the edge `why` at 140 chars, enforced in
       `linker.rs::commit_edge` (reject over-cap with a clear error; tests) and surfaced in the
       UI as a live character counter + maxlength on the link/restore justification inputs.
       Compression is elaboration: a hard cap forces the essence of the relationship.

@@ -35,6 +35,10 @@
   let linkTried = $state(false);
   let linkWhy = $state("");
   let linkError = $state("");
+  // #20a — the tweet cap: a justification must fit in 140 chars (enforced again in
+  // linker.rs::commit_edge). Counted in Unicode chars to match the backend.
+  const WHY_MAX = 140;
+  const whyLen = $derived(Array.from(linkWhy.trim()).length);
 
   // --- search (escape hatch) ---
   let searchOpen = $state(false);
@@ -210,6 +214,10 @@
       linkError = "A link needs a one-sentence reason.";
       return;
     }
+    if (whyLen > WHY_MAX) {
+      linkError = `Compress it: a justification must fit in ${WHY_MAX} characters.`;
+      return;
+    }
     try {
       await api.commitLink(note.id, linkResolved.id, linkWhy);
       outgoing = await api.outgoing(note.id);
@@ -382,7 +390,11 @@
               {/if}
             {:else}
               <p>Linking to <strong>{linkResolved.title}</strong>. Why are they connected?</p>
-              <textarea bind:value={linkWhy} placeholder="One sentence: these connect because…"></textarea>
+              <textarea bind:value={linkWhy} maxlength={WHY_MAX}
+                        placeholder="One tweet: these connect because…"></textarea>
+              <p class="counter" class:warn={whyLen > WHY_MAX - 20}>
+                {WHY_MAX - whyLen} left — compression is elaboration
+              </p>
               {#if linkError}<p class="err">{linkError}</p>{/if}
               <div class="row">
                 <button onclick={confirmLink}>Commit link</button>
@@ -491,6 +503,8 @@
   button.danger { color: #e0a0a0; }
   .hint { color: #6b7178; }
   .err { color: #e57373; font-size: .85rem; }
+  .counter { color: #6b7178; font-size: .72rem; margin: .2rem 0 0; text-align: right; }
+  .counter.warn { color: #c9a85f; }
   .review { margin-top: 1rem; border-top: 1px solid #23272e; padding-top: .7rem; }
   .review-head { font-size: .8rem; color: #c9a85f; font-weight: 600; }
   .review .sub { margin: .2rem 0 .4rem; }

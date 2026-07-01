@@ -9,6 +9,13 @@ use crate::index::{Index, NodeMeta};
 use crate::vault::{Link, Vault};
 use anyhow::{anyhow, Result};
 
+/// Hard cap on a justification's length, in characters (#20a). Compression is
+/// elaboration: a tweet-sized "why" forces the essence of the relationship instead
+/// of a pasted abstract. Applies to every path that writes a justification —
+/// `restore_link` re-justification included, since it also goes through
+/// `commit_edge`.
+pub const MAX_JUSTIFICATION_CHARS: usize = 140;
+
 /// The result of resolving a typed-from-memory title.
 #[derive(Debug, PartialEq)]
 pub enum Resolution {
@@ -38,6 +45,12 @@ pub fn commit_edge(
     let why = justification.trim();
     if why.is_empty() {
         return Err(anyhow!("a link requires a one-sentence justification"));
+    }
+    let len = why.chars().count();
+    if len > MAX_JUSTIFICATION_CHARS {
+        return Err(anyhow!(
+            "a justification must fit in {MAX_JUSTIFICATION_CHARS} characters ({len} given) — compress it to the essence of the connection"
+        ));
     }
     if from_id == to_id {
         return Err(anyhow!("a note cannot link to itself"));
@@ -118,6 +131,49 @@ mod tests {
     fn commit_edge_rejects_self_link() {
         let (_d, v, idx, a_id, _b) = setup();
         assert!(commit_edge(&v, &idx, &a_id, &a_id, "because").is_err());
+    }
+
+    #[test]
+    fn commit_edge_rejects_justification_over_140_chars() {
+        let (_d, v, idx, a_id, b_id) = setup();
+        let over = "x".repeat(MAX_JUSTIFICATION_CHARS + 1);
+        let err = commit_edge(&v, &idx, &a_id, &b_id, &over).unwrap_err();
+        assert!(err.to_string().contains("140"), "error should name the cap: {err}");
+        // nothing was written
+        assert!(v.read_note(&a_id).unwrap().links.is_empty());
+        assert!(idx.backlinks(&b_id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn commit_edge_accepts_justification_at_exactly_140_chars() {
+        let (_d, v, idx, a_id, b_id) = setup();
+        let exact = "y".repeat(MAX_JUSTIFICATION_CHARS);
+        commit_edge(&v, &idx, &a_id, &b_id, &exact).unwrap();
+        assert_eq!(v.read_note(&a_id).unwrap().links[0].why, exact);
+    }
+
+    #[test]
+    fn justification_cap_counts_chars_not_bytes() {
+        let (_d, v, idx, a_id, b_id) = setup();
+        // 140 two-byte chars (280 bytes) must pass: the cap is on characters.
+        let multibyte = "é".repeat(MAX_JUSTIFICATION_CHARS);
+        commit_edge(&v, &idx, &a_id, &b_id, &multibyte).unwrap();
+    }
+
+    #[test]
+    fn justification_cap_applies_when_trimmed_and_leaves_existing_edge_intact() {
+        let (_d, v, idx, a_id, b_id) = setup();
+        // surrounding whitespace doesn't count against the cap…
+        let padded = format!("  {}  ", "z".repeat(MAX_JUSTIFICATION_CHARS));
+        commit_edge(&v, &idx, &a_id, &b_id, &padded).unwrap();
+        // …and an over-cap re-justification (the restore_link path) is rejected
+        // without clobbering the committed why.
+        let over = "x".repeat(MAX_JUSTIFICATION_CHARS + 1);
+        assert!(commit_edge(&v, &idx, &a_id, &b_id, &over).is_err());
+        assert_eq!(
+            v.read_note(&a_id).unwrap().links[0].why,
+            "z".repeat(MAX_JUSTIFICATION_CHARS)
+        );
     }
 
     #[test]
