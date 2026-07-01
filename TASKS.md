@@ -128,8 +128,23 @@ Lanes: **A** capture-scaffold-notes (wave0 → #18a → #18b, opus) · **B** cap
       opens in the system viewer; "Open PDF ↗" from the note, `/?note=<id>` deep link back.
       touches: `src-tauri/src/sources.rs` (new), `commands.rs`, `lib.rs`, `api.ts`,
       `src/routes/library/`, nav · blocked-by: none
-- [ ] **#20 Recall-gated link carousel** — face-down cards for the library; typing a title
-      from memory flips its card, a flipped card can be dragged onto the open note to form an
-      edge, and the justification is tweet-constrained (≤140 chars). Recall gates the
-      carousel — it must never become a readable pick-list (CONTEXT.md ban on candidate
-      lists). touches: notes view link flow, maybe `linker.rs` · blocked-by: #19
+**#20 Recall-gated link carousel** (split into the two slices below — same lane, serial:
+both edit the notes-view link flow). Thesis guardrail: recall gates the carousel — cards are
+face-down until the user types the exact title from memory; it must never become a readable
+pick-list (CONTEXT.md ban on candidate lists), and flipping must reuse the exact resolver
+(`resolve_link`), never a fuzzy match.
+
+- [ ] **#20a Tweet-constrained justification** — cap the edge `why` at 140 chars, enforced in
+      `linker.rs::commit_edge` (reject over-cap with a clear error; tests) and surfaced in the
+      UI as a live character counter + maxlength on the link/restore justification inputs.
+      Compression is elaboration: a hard cap forces the essence of the relationship.
+      touches: `src-tauri/src/linker.rs`, `src/routes/+page.svelte` (link panel only)
+      · blocked-by: none
+- [ ] **#20b Flip-to-recall carousel** — a strip of face-down cards (one per note, shuffled,
+      titles hidden) shown in the link flow; typing a title from memory flips only its exact
+      match (via existing `resolve_link` — NO new backend, NO candidate list); a flipped card
+      can be dragged onto the open note to start the edge, landing in the #20a tweet-capped
+      justify step. Flips may persist for the session (a scoreboard of what you've retrieved),
+      but never across sessions. No new Tauri commands.
+      touches: `src/lib/LinkCarousel.svelte` (new), `src/routes/+page.svelte` (link flow)
+      · blocked-by: #20a
