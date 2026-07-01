@@ -149,69 +149,111 @@ pick-list (CONTEXT.md ban on candidate lists), and flipping must reuse the exact
       touches: `src/lib/LinkCarousel.svelte` (new), `src/routes/+page.svelte` (link flow)
       · blocked-by: #20a
 
-## v3 — The Archive pivot (2026-07-01)
+## v3 — Card/thread Folgezettel pivot (2026-07-01)
 
-**Direction change, decided by the owner.** The productive-friction / recall thesis behind
-#9–#10, #13–#15, #17 and #20 is retired — see the rewritten `CONTEXT.md` ("The pivot").
-The app becomes a close cousin of **The Archive** (nimble, calm, plain text, search-first,
-autocomplete where it helps) with one differentiator: every note can map to a document
-(arXiv id / DOI / PDF) that is always one keystroke away. Recall gates, quizzes, decay,
-and mandatory justifications are **removed**, not preserved. Old thesis guardrails in the
-sections above are void; they remain only as history.
+**Direction change, decided by the owner over a design grill.** The productive-friction /
+recall thesis behind #9–#10, #13–#15, #17 and #20 is retired (see `CONTEXT.md` "The
+pivot"). The positive direction — settled turn by turn in the grill, superseding the brief
+"Archive-clone-with-PDFs" framing — is a **card/thread Folgezettel** notebook: The
+Archive's soul (nimble, calm, plain text, search-first, autocomplete welcome) with a
+card/thread structure, a *derived* Folgezettel address per card, and source papers mapped
+in as first-class threads. Read `CONTEXT.md` "The core model" before touching #22+ — the
+disk format is load-bearing.
 
-- [ ] **#21 Remove the recall machinery** — delete `recall.rs` (guess scoring, review
-      grading), decay/SM-2/`recall_log` in `index.rs`, the `what_to_review`/`due_reviews`/
-      `grade_review`/`restore_link` commands, the `/graph` reconstruction quiz, the flip-to-
-      recall carousel, and the recall gate on backlinks — backlinks render instantly.
-      `linker.rs`: drop the justification requirement and the 140-char cap (simple title
-      resolve stays as a stopgap until #23 replaces linking wholesale). All tests green after
-      the cut; `rebuild_from_vault` migrates existing indexes (recall columns dropped).
+Design decisions locked in the grill (do not relitigate — see [[recall-thesis-retired]]
+memory for the why):
+- **Card = one file** (opaque stable id filename, no required title, first line is the
+  label). **Thread = a manifest note** (title + a nested Markdown list of `[[card]]` links
+  = a classical structure note); reading a thread concatenates its cards into prose.
+- **Folgezettel address is derived**, never stored: a pure function of a card's position in
+  a manifest's nested list (`2a1`). Reorderable, so always currently-true, never decaying.
+  A card may sit in **many threads** (many-to-many) → many addresses. Chosen over literal
+  ids-in-filenames, which lock one lineage and decay.
+- **Placement gesture** (continue / branch-off-current / new-thread) at card creation is
+  the one deliberate act — authoring, not a quiz.
+- **A paper is a thread** (manifest carries pdf/citekey/authors); reading = growing it;
+  citing a paper = a wiki-link to its thread shown as the citekey. Idea threads = same
+  object without refs. One ontology.
+
+- [ ] **#21 Demolish the recall machinery** — clean slate before the new model. Delete
+      `recall.rs` (guess scoring, review grading), decay/SM-2/`recall_log` in `index.rs`,
+      the `what_to_review`/`due_reviews`/`grade_review`/`restore_link` commands, the `/graph`
+      reconstruction quiz, the flip-to-recall carousel, and the recall gate on backlinks.
+      `linker.rs`: drop the justification requirement + 140-char cap (kept only as a stopgap
+      resolver until #22/#23 replace linking). All tests green after the cut; `rebuild_from_vault`
+      still works (recall columns dropped).
       touches: `src-tauri/src/recall.rs` (delete), `index.rs`, `linker.rs`, `commands.rs`,
       `lib.rs`, `api.ts`, `src/routes/+page.svelte`, `src/routes/graph/` (delete),
       `src/lib/Graph.svelte` (delete), `src/lib/LinkCarousel.svelte` (delete) · blocked-by: none
 
-- [ ] **#22 Omnibar** — The Archive's core loop: one field; typing searches title/alias/body
-      as you type (ranked: title prefix, then alias, then body); Return opens the top hit or
-      creates a note titled with the query when nothing matches; the sidebar note list *is*
-      the live result list (all notes, newest first, when the field is empty). Retires the
-      separate search disclosure and the new-note mini-form.
+- [ ] **#22 Card/thread data model + derived Folgezettel + migration** — the foundational
+      new layer; everything downstream depends on it. `vault.rs`: two note kinds — **card**
+      (opaque id, optional title, body = one atom) and **thread manifest** (title, optional
+      refs, body = nested Markdown list of `[[card]]` links); parse/write the manifest tree.
+      Folgezettel addressing as a **pure function** (manifest tree position → `2a1`), unit-
+      tested standalone, no addresses on disk. `index.rs`: cards, threads, membership (with
+      derived address), card→target links, FTS — all rebuildable. **Migration**
+      (`rebuild_from_vault` tolerates both): each legacy note → a single-card thread of the
+      same title; its frontmatter `links` become card-body wiki-links `[[id]] — <why>` (whys
+      survive as prose); paper/source notes (a pdf ref) → paper threads (refs → manifest).
+      Tests: address derivation over trees, a card in two threads → two addresses, migration
+      round-trip, rebuild idempotent.
+      touches: `src-tauri/src/vault.rs`, `index.rs`, `folgezettel.rs` (new, the pure address
+      fn), `commands.rs`, `lib.rs`, `api.ts` · blocked-by: #21
+
+- [ ] **#23 Thread view + card editor** — the make-or-break UI. Read a thread top-to-bottom
+      as flowing prose (cards concatenated) with card boundaries visible; write *through*
+      cards; split a paragraph into a new card via the **placement gesture** (continue /
+      branch-off-current / new-thread). The manifest is maintained silently as you write
+      (append card links), and stays hand-editable. `[[...]]` autocompletes over thread
+      titles; link a specific card via copy-link/drag → `[[card-id]]`, rendered as the card's
+      first line. Backlinks show the linking card's first line as context.
+      touches: `src/lib/Editor.svelte`, `src/routes/+page.svelte`, `src-tauri/src/vault.rs`
+      (manifest writes), `commands.rs`, `api.ts` · blocked-by: #22
+
+- [ ] **#24 Collate & export** — walk a thread manifest in address order, concatenate its
+      cards into one Markdown file (a paper thread → citation header + cards = a
+      self-contained literature note). The "export a thread" action.
+      touches: `src-tauri/src/export.rs` (new), `commands.rs`, `lib.rs`, `api.ts`,
+      `src/routes/+page.svelte` · blocked-by: #22 (parallel with #23)
+
+- [ ] **#25 Omnibar** — The Archive's core loop over the new model: one field; typing
+      searches cards (first-line label + thread breadcrumb) and thread titles as you type;
+      Return opens the top hit or creates. The sidebar list = threads (papers + idea threads),
+      newest first, when the field is empty. Retires the separate search disclosure and the
+      new-note mini-form.
       touches: `src/routes/+page.svelte`, `src-tauri/src/index.rs` (ranking), `commands.rs`,
-      `lib.rs`, `api.ts` · blocked-by: #21
+      `lib.rs`, `api.ts` · blocked-by: #22
 
-- [ ] **#23 Wiki-links in prose as the linking model** — `[[...]]` typed in the body
-      autocompletes over titles/aliases/ids; click follows the link; a link to a nonexistent
-      note prefills the omnibar to create it. The index derives edges by parsing body
-      wiki-links on reindex. One-time migration: append each legacy frontmatter link to the
-      body as `- [[Title]] — <why>` under a `## Links` heading (the written whys survive as
-      prose), then drop the frontmatter `links` field. Backlinks display the sentence around
-      the link (link context).
-      touches: `src/lib/Editor.svelte`, `src-tauri/src/vault.rs`, `index.rs`, `linker.rs`
-      (retire), `commands.rs`, `api.ts` · blocked-by: #21
-      (⚠ shares `index.rs`/`commands.rs`/`+page.svelte` with #22 — same lane, run after #22)
+- [ ] **#26 Paper threads (the arXiv layer)** — paste an arXiv URL/id or drop a PDF → a
+      **paper thread** with fetched title/authors/abstract/citekey in the manifest, PDF filed
+      to `<vault>/literature/`. Reading grows the thread's cards; citing a paper elsewhere =
+      `[[paper-thread]]` shown as the citekey; maintain `<vault>/literature/literature.bib`
+      from paper-thread refs. Folds `sources.rs` + `bibtex.rs` into the thread model; no
+      naming/idea gate (retired).
+      touches: `src-tauri/src/sources.rs`, `bibtex.rs`, `index.rs` (citekey lookup),
+      `commands.rs`, `lib.rs`, `api.ts`, `src/routes/library/` · blocked-by: #22
+      (own lane, parallel with #23/#25)
 
-- [ ] **#24a Frictionless paper capture** — paste an arXiv URL/id or drop a PDF → note
-      auto-created with fetched title, authors, abstract, and a citekey ref; the PDF is
-      filed to `<vault>/literature/` and mapped to the note. No naming gate, no required
-      idea sentence (the generation-effect gate is retired). Reuses `bibtex.rs` + `sources.rs`.
-      touches: `src-tauri/src/sources.rs`, `bibtex.rs`, `commands.rs`, `lib.rs`, `api.ts`,
-      `src/routes/library/` · blocked-by: #21 (parallel with #22/#23 — different lane)
-
-- [ ] **#24b The paper pane** — the mapped document always one keystroke away: ⌘O and a
-      toolbar button open the note's PDF; a toggleable split pane renders the PDF inline
-      beside the editor so you read and write side by side; an arXiv ref without a local
-      PDF offers fetch-and-file.
+- [ ] **#27 Paper pane** — the mapped PDF one keystroke away: ⌘O opens it; a toggleable
+      split pane renders the PDF beside the thread view so you read the paper and write cards
+      into its thread side by side; an arXiv ref without a local PDF offers fetch-and-file.
       touches: `src/lib/PdfPane.svelte` (new), `src/routes/+page.svelte`,
-      `src-tauri/src/sources.rs` (fetch/open), `commands.rs`, `lib.rs`, `api.ts` · blocked-by: #24a
+      `src-tauri/src/sources.rs` (fetch/open), `commands.rs`, `lib.rs`, `api.ts`
+      · blocked-by: #23, #26
 
-- [ ] **#24c literature.bib** — maintain `<vault>/literature/literature.bib` generated from
-      paper notes' refs (citekey, title, authors, year, arXiv id); `[#citekey]` in prose
-      renders as a citation; clicking it jumps to the paper note or opens its PDF. Capture
-      appends the full citation line to the note body so every note stays self-contained.
-      touches: `src-tauri/src/bibtex.rs`, `index.rs` (citekey lookup), `src/lib/Editor.svelte`,
-      `api.ts` · blocked-by: #24a, #23
+- [ ] **#28 The two-level graph** — the only graph the new thesis allows: draws **only
+      hand-made** connections (no similarity, ever). Top level: threads as nodes (sized by
+      card count); edges of two manual kinds — *link edges* (a card in A links into B) and
+      *membership edges* (a card in both manifests); hover lists the linking cards. Drill into
+      a node → the thread's **Folgezettel spine** (trunk + branches, cross-thread links as
+      ports). Read-only navigation first.
+      touches: `src/routes/graph/` (new), `src/lib/Graph.svelte` (new),
+      `src-tauri/src/index.rs` (thread-edge aggregation), `commands.rs`, `api.ts`
+      · blocked-by: #22 (ideally after #23)
 
-- [ ] **#25 Archive polish** — timestamp ids (`YYYYMMDDHHmm`) for new notes (existing uuid
-      ids stay valid forever); clickable `#hashtags` run an omnibar search; saved searches
-      pinned in the sidebar; typewriter-mode toggle.
-      touches: `src-tauri/src/vault.rs` (id gen), `src/lib/Editor.svelte`,
-      `src/routes/+page.svelte`, `settings.rs` · blocked-by: #22
+- [ ] **#29 Polish** — clickable `#hashtags` run an omnibar search; saved searches pinned in
+      the sidebar; typewriter-mode toggle; optional global thread index / section numbering
+      (Doto's leading-digit "sections") if wanted.
+      touches: `src/lib/Editor.svelte`, `src/routes/+page.svelte`, `settings.rs`
+      · blocked-by: #25

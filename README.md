@@ -1,21 +1,24 @@
 # local-roam
 
-A standalone, local-first macOS Zettelkasten for ML research — nimble, calm, plain text,
-in the spirit of [The Archive](https://zettelkasten.de/the-archive/) — with the papers
-living inside it: every note can map to an arXiv id / DOI / PDF that opens in one keystroke.
+A standalone, local-first macOS notebook for ML research — nimble, calm, plain text, in the
+spirit of [The Archive](https://zettelkasten.de/the-archive/) — built on **atomic cards
+assembled into threads**, with the source papers living inside it.
 
 > **Pivot note (2026-07-01):** the original "productive friction" recall thesis (typed-from-
-> memory links, quiz-before-reveal backlinks) is retired — see the pivot section in
-> [`CONTEXT.md`](./CONTEXT.md). `docs/PRD.md` describes the pre-pivot v1 and is historical.
+> memory links, quiz-before-reveal backlinks) is retired, and the positive direction is a
+> card/thread Folgezettel model — see [`CONTEXT.md`](./CONTEXT.md) ("The core model").
+> `docs/PRD.md` describes the pre-pivot v1 and is historical.
 
-## The core loop
+## The model
 
-1. **Omnibar** — one field: type to search everything; Return opens the match or creates
-   the note. The note list is the result list.
-2. **Wiki-links in prose** — `[[links]]` autocomplete as you type; backlinks are computed
-   and shown instantly, with the sentence around the link as context.
-3. **The paper is right there** — paste an arXiv link or drop a PDF and a paper note is
-   created with fetched metadata; the document stays one keystroke away while you write.
+1. **Cards** — one atomic idea per file; no title needed (the first line is its label).
+2. **Threads** — a manifest note (a nested list of card links) that reads top-to-bottom as
+   one flowing long-form note. A card can belong to several threads.
+3. **Folgezettel, derived** — every card shows an address (`2a1`) computed from its place in
+   a thread; reorderable, so it never decays. New cards continue a thread, branch off the
+   current card, or start a new one.
+4. **A paper is a thread** — paste an arXiv link or drop a PDF and a paper thread appears
+   with fetched metadata; you read it in a side pane and grow the thread card by card.
 
 Your notes are plain Markdown files in a folder you choose; a SQLite index (a rebuildable
 cache) lives in `.local-roam/` inside the vault. No lock-in — the vault stays usable in
