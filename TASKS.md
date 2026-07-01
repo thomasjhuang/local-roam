@@ -175,7 +175,7 @@ memory for the why):
   citing a paper = a wiki-link to its thread shown as the citekey. Idea threads = same
   object without refs. One ontology.
 
-- [x] **#21 Demolish the recall machinery** (9610615) — clean slate before the new model. Delete
+- [x] **#21 Demolish the recall machinery** (d47b72b) — clean slate before the new model. Delete
       `recall.rs` (guess scoring, review grading), decay/SM-2/`recall_log` in `index.rs`,
       the `what_to_review`/`due_reviews`/`grade_review`/`restore_link` commands, the `/graph`
       reconstruction quiz, the flip-to-recall carousel, and the recall gate on backlinks.
