@@ -3,6 +3,7 @@
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { api, type FailedConnection, type NodeMeta, type Note, type OutLink, type RecallResult, type TagCount } from "$lib/api";
   import Editor from "$lib/Editor.svelte";
+  import LinkCarousel, { CARD_MIME, flipped } from "$lib/LinkCarousel.svelte";
 
   // --- vault ---
   let vaultPath = $state<string | null>(null);
@@ -39,6 +40,10 @@
   // linker.rs::commit_edge). Counted in Unicode chars to match the backend.
   const WHY_MAX = 140;
   const whyLen = $derived(Array.from(linkWhy.trim()).length);
+  // #20b — flip-to-recall carousel: recalling a title flips its card; the justify
+  // step is reached by dragging a flipped card onto this note.
+  let flipFlash = $state("");
+  let dragCard = $state<NodeMeta | null>(null);
 
   // --- search (escape hatch) ---
   let searchOpen = $state(false);
@@ -186,6 +191,8 @@
     linkTried = false;
     linkWhy = "";
     linkError = "";
+    flipFlash = "";
+    dragCard = null;
   }
   function cancelLink() {
     linking = false;
@@ -194,19 +201,56 @@
     linkAttempt = "";
     linkWhy = "";
     linkError = "";
+    flipFlash = "";
+    dragCard = null;
   }
+  // Recalling an exact title flips its card in the carousel (#20b). Resolution stays
+  // exact-or-nothing through api.resolveLink — a near miss flips nothing and reveals
+  // nothing. The edge itself starts when the flipped card is dropped on this note.
   async function resolveAttempt() {
     linkError = "";
-    linkTried = true;
-    linkResolved = await api.resolveLink(linkAttempt);
+    flipFlash = "";
+    const match = await api.resolveLink(linkAttempt);
+    if (!match) {
+      linkTried = true;
+      return;
+    }
+    linkTried = false;
+    if (match.id === note?.id) {
+      linkError = "That's the note you're on — recall a different one.";
+      return;
+    }
+    flipFlash = flipped.has(match.id)
+      ? `“${match.title}” was already flipped — drag its card onto this note to link.`
+      : `Flipped “${match.title}” — drag its card onto this note to link.`;
+    flipped.add(match.id);
+    linkAttempt = "";
   }
   async function createFromAttempt() {
     const t = linkAttempt.trim();
     if (!t) return;
     const n = await api.createNote(t, [], [], [], "");
     await refreshNotes();
+    // A deliberately created note skips the drag: you generated its title yourself,
+    // so its card counts as retrieved and you land straight in the justify step.
+    flipped.add(n.id);
     linkResolved = { id: n.id, title: n.title, aliases: [], refs: [] };
     linkTried = true;
+  }
+  function allowCardDrop(e: DragEvent) {
+    if (linking && !linkResolved && e.dataTransfer?.types.includes(CARD_MIME)) e.preventDefault();
+  }
+  function handleCardDrop(e: DragEvent) {
+    const id = e.dataTransfer?.getData(CARD_MIME);
+    if (!id || !linking || linkResolved) return;
+    e.preventDefault();
+    dragCard = null;
+    const n = notes.find((x) => x.id === id);
+    if (!n || !note || n.id === note.id) return;
+    linkResolved = n;
+    linkTried = false;
+    linkError = "";
+    flipFlash = "";
   }
   async function confirmLink() {
     if (!note || !linkResolved) return;
@@ -350,7 +394,8 @@
       </div>
     </aside>
 
-    <main class="editor">
+    <!-- the open note is the drop target for a flipped carousel card (#20b) -->
+    <main class="editor" ondragover={allowCardDrop} ondrop={handleCardDrop}>
       {#if !note}
         <p class="hint">Select or create a note.</p>
       {:else}
@@ -374,13 +419,19 @@
           <div class="panel link">
             <h3>Link from memory</h3>
             {#if !linkResolved}
-              <p class="sub">Type the exact title (or alias) of the note to link — no autocomplete.</p>
+              <p class="sub">
+                Every other note is a face-down card. Flip one by typing its exact title
+                (or alias) from memory — no autocomplete — then drag the flipped card
+                onto this note to link.
+              </p>
               <div class="row">
-                <input bind:value={linkAttempt} placeholder="recall the title…"
+                <input bind:value={linkAttempt} placeholder="recall a title to flip its card…"
                        onkeydown={(e) => e.key === "Enter" && resolveAttempt()} />
-                <button onclick={resolveAttempt}>Resolve</button>
+                <button onclick={resolveAttempt}>Flip</button>
                 <button class="ghost" onclick={cancelLink}>Cancel</button>
               </div>
+              {#if flipFlash}<p class="flash">{flipFlash}</p>{/if}
+              {#if linkError}<p class="err">{linkError}</p>{/if}
               {#if linkTried && !linkResolved}
                 <p class="err">No note resolved from “{linkAttempt}”.</p>
                 <div class="row">
@@ -388,6 +439,13 @@
                   <button class="ghost" onclick={createFromAttempt}>Create “{linkAttempt.trim()}” as a new note</button>
                 </div>
               {/if}
+              {#if dragCard}
+                <div class="dropzone" role="region" aria-label="drop the card here to link"
+                     ondragover={allowCardDrop} ondrop={handleCardDrop}>
+                  Drop to link “{title}” → “{dragCard.title}”
+                </div>
+              {/if}
+              <LinkCarousel {notes} excludeId={note.id} onDragChange={(c) => (dragCard = c)} />
             {:else}
               <p>Linking to <strong>{linkResolved.title}</strong>. Why are they connected?</p>
               <textarea bind:value={linkWhy} maxlength={WHY_MAX}
@@ -505,6 +563,9 @@
   .err { color: #e57373; font-size: .85rem; }
   .counter { color: #6b7178; font-size: .72rem; margin: .2rem 0 0; text-align: right; }
   .counter.warn { color: #c9a85f; }
+  .flash { color: #8fce8f; font-size: .85rem; margin: .3rem 0; }
+  .dropzone { border: 1.5px dashed #3b6ea5; border-radius: 8px; padding: .8rem; margin: .5rem 0;
+              text-align: center; color: #8fb8ff; font-size: .85rem; background: #16202e; }
   .review { margin-top: 1rem; border-top: 1px solid #23272e; padding-top: .7rem; }
   .review-head { font-size: .8rem; color: #c9a85f; font-weight: 600; }
   .review .sub { margin: .2rem 0 .4rem; }

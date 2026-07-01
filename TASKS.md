@@ -140,7 +140,7 @@ pick-list (CONTEXT.md ban on candidate lists), and flipping must reuse the exact
       Compression is elaboration: a hard cap forces the essence of the relationship.
       touches: `src-tauri/src/linker.rs`, `src/routes/+page.svelte` (link panel only)
       · blocked-by: none
-- [ ] **#20b Flip-to-recall carousel** — a strip of face-down cards (one per note, shuffled,
+- [x] **#20b Flip-to-recall carousel** — a strip of face-down cards (one per note, shuffled,
       titles hidden) shown in the link flow; typing a title from memory flips only its exact
       match (via existing `resolve_link` — NO new backend, NO candidate list); a flipped card
       can be dragged onto the open note to start the edge, landing in the #20a tweet-capped
