@@ -1,7 +1,7 @@
 //! Tauri command layer — thin glue exposing the deep modules to the frontend.
 //! Intentionally shallow; not unit-tested (the logic lives in the modules below it).
 
-use crate::index::{Backlink, NodeMeta, OutLink, TagCount};
+use crate::index::{Backlink, CardMembership, CardMeta, NodeMeta, OutLink, TagCount, ThreadCard, ThreadMeta};
 use crate::linker::{self, Resolution};
 use crate::state::{AppState, OpenVault};
 use crate::bibtex::{self, Source};
@@ -317,4 +317,40 @@ pub fn open_source(
     app.opener()
         .open_path(path, None::<&str>)
         .map_err(|e| format!("{e:#}"))
+}
+
+// --- v3 card/thread model (#22): read surfaces for the new UI (#23+) ----------------
+// The vault is the source of truth; these expose the derived card/thread/membership
+// cache. Folgezettel addresses come back derived, never stored.
+
+/// Every thread (papers + idea threads), title-sorted, with its card count.
+#[tauri::command]
+pub fn list_threads(state: State<AppState>) -> Result<Vec<ThreadMeta>, String> {
+    with_vault(&state, |ov| ov.index.threads())
+}
+
+/// The cards of a thread in manifest order, each with its derived Folgezettel address.
+#[tauri::command]
+pub fn thread_cards(state: State<AppState>, thread_id: String) -> Result<Vec<ThreadCard>, String> {
+    with_vault(&state, |ov| ov.index.thread_cards(&thread_id))
+}
+
+/// Every card, with its first-line label.
+#[tauri::command]
+pub fn list_cards(state: State<AppState>) -> Result<Vec<CardMeta>, String> {
+    with_vault(&state, |ov| ov.index.cards())
+}
+
+/// Every thread a card belongs to, with its derived address there (a card in two
+/// threads returns two — two addresses for one card).
+#[tauri::command]
+pub fn card_memberships(state: State<AppState>, card_id: String) -> Result<Vec<CardMembership>, String> {
+    with_vault(&state, |ov| ov.index.card_memberships(&card_id))
+}
+
+/// The ids a card links to (parsed from its body wiki-links); a target may be a card
+/// or a thread.
+#[tauri::command]
+pub fn card_targets(state: State<AppState>, card_id: String) -> Result<Vec<String>, String> {
+    with_vault(&state, |ov| ov.index.card_targets(&card_id))
 }

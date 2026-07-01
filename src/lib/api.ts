@@ -60,6 +60,38 @@ export interface Template {
   body: string;
 }
 
+// --- v3 card/thread model (#22) ---
+
+/** A card: opaque id + first-line label (cards are untitled by default). */
+export interface CardMeta {
+  id: string;
+  label: string;
+  title: string | null;
+}
+
+/** A thread (a paper or an idea thread) with its card count. */
+export interface ThreadMeta {
+  id: string;
+  title: string;
+  refs: string[];
+  card_count: number;
+}
+
+/** A card as it sits in one thread, with its derived Folgezettel address. */
+export interface ThreadCard {
+  card_id: string;
+  address: string;
+  label: string;
+  position: number;
+}
+
+/** One thread a card belongs to, with the card's derived address there. */
+export interface CardMembership {
+  thread_id: string;
+  thread_title: string;
+  address: string;
+}
+
 export const api = {
   getSavedVault: () => invoke<string | null>("get_saved_vault"),
   openVault: (path: string) => invoke<void>("open_vault", { path }),
@@ -93,6 +125,20 @@ export const api = {
   listSources: () => invoke<SourceMeta[]>("list_sources"),
   /** Open the source's PDF in the system viewer (Preview). */
   openSource: (id: string) => invoke<void>("open_source", { id }),
+
+  /**
+   * v3 card/thread model (#22) — read surfaces for the new UI (#23+). The vault is the
+   * source of truth; these expose the derived card/thread/membership cache. Folgezettel
+   * addresses come back derived, never stored.
+   */
+  listThreads: () => invoke<ThreadMeta[]>("list_threads"),
+  /** The cards of a thread in manifest order, each with its derived address. */
+  threadCards: (threadId: string) => invoke<ThreadCard[]>("thread_cards", { threadId }),
+  listCards: () => invoke<CardMeta[]>("list_cards"),
+  /** Every thread a card belongs to — a card in two threads returns two addresses. */
+  cardMemberships: (cardId: string) => invoke<CardMembership[]>("card_memberships", { cardId }),
+  /** The ids a card links to (from its body wiki-links); a target may be a card or thread. */
+  cardTargets: (cardId: string) => invoke<string[]>("card_targets", { cardId }),
 
   /**
    * Capture namespace — features that *create notes* (templates, daily notes, imports,

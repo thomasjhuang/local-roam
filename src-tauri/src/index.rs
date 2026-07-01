@@ -5,7 +5,8 @@
 //! is lost it can be rebuilt with [`Index::rebuild_from_vault`] — nothing of value is
 //! lost, only the cache.
 
-use crate::vault::{Note, Vault};
+use crate::folgezettel;
+use crate::vault::{self, Entry, Note, Thread, Vault};
 use anyhow::Result;
 use rusqlite::Connection;
 use serde::Serialize;
@@ -41,11 +42,50 @@ pub struct OutLink {
     pub why: String,
 }
 
+// --- v3 card/thread read models (#22) ----------------------------------------------
+
+/// A card row: its opaque id, its first-line label, and its optional title.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct CardMeta {
+    pub id: String,
+    pub label: String,
+    pub title: Option<String>,
+}
+
+/// A thread row: its id, title, refs (a paper thread carries them), and card count.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct ThreadMeta {
+    pub id: String,
+    pub title: String,
+    pub refs: Vec<String>,
+    pub card_count: i64,
+}
+
+/// A card as it sits in one thread: its derived address, label, and manifest position.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct ThreadCard {
+    pub card_id: String,
+    pub address: String,
+    pub label: String,
+    pub position: i64,
+}
+
+/// One of a card's memberships: a thread it belongs to and its derived address there.
+/// A card in two threads yields two of these — two addresses for one card.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct CardMembership {
+    pub thread_id: String,
+    pub thread_title: String,
+    pub address: String,
+}
+
 pub struct Index {
     conn: Connection,
 }
 
 impl Index {
+    /// An ephemeral in-memory index — a test helper only; the app always opens on disk.
+    #[cfg(test)]
     pub fn open_in_memory() -> Result<Self> {
         let idx = Self {
             conn: Connection::open_in_memory()?,
@@ -77,6 +117,36 @@ impl Index {
                 to_id         TEXT NOT NULL,
                 justification TEXT NOT NULL DEFAULT '',
                 PRIMARY KEY (from_id, to_id)
+            );
+            -- v3 card/thread model (#22). All four tables are a fully-derived cache:
+            -- rebuild_from_vault clears and repopulates them from the files, so deleting
+            -- the index loses nothing. Folgezettel addresses are derived, never stored
+            -- as truth — the `address` column is recomputed on every rebuild.
+            CREATE TABLE IF NOT EXISTS cards (
+                id      TEXT PRIMARY KEY,
+                title   TEXT,
+                body    TEXT NOT NULL DEFAULT '',
+                tags    TEXT NOT NULL DEFAULT '[]',
+                created TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS threads (
+                id      TEXT PRIMARY KEY,
+                title   TEXT NOT NULL,
+                refs    TEXT NOT NULL DEFAULT '[]',
+                tags    TEXT NOT NULL DEFAULT '[]',
+                created TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS membership (
+                thread_id TEXT NOT NULL,
+                card_id   TEXT NOT NULL,
+                address   TEXT NOT NULL,
+                position  INTEGER NOT NULL,
+                PRIMARY KEY (thread_id, card_id)
+            );
+            CREATE TABLE IF NOT EXISTS card_links (
+                from_card TEXT NOT NULL,
+                to_target TEXT NOT NULL,
+                PRIMARY KEY (from_card, to_target)
             );",
         )?;
         // Back-fill the tags column on indexes created before #18c. Idempotent: the
@@ -100,34 +170,138 @@ impl Index {
         Ok(found)
     }
 
-    /// Sync the index to match the vault. Idempotent: running it twice on an unchanged
-    /// vault is a no-op.
+    /// Sync the index to match the vault. Reads every classified file (cards, threads,
+    /// legacy notes) and rebuilds both the legacy node/edge cache (for the current UI)
+    /// and the v3 card/thread/membership model. Idempotent: running it twice on an
+    /// unchanged vault yields the same index.
     pub fn rebuild_from_vault(&self, vault: &Vault) -> Result<()> {
-        let notes = vault.list_notes()?;
-        let keep_ids: Vec<String> = notes.iter().map(|n| n.id.clone()).collect();
+        let entries = vault.list_entries()?;
 
+        // --- legacy node/edge cache (the current, pre-#23 UI reads this) ---
+        let notes: Vec<&Note> = entries
+            .iter()
+            .filter_map(|e| match e {
+                Entry::Legacy(n) => Some(n),
+                _ => None,
+            })
+            .collect();
+        let keep_ids: Vec<String> = notes.iter().map(|n| n.id.clone()).collect();
         for note in &notes {
             self.reindex_note(note)?;
         }
-
-        // Drop nodes that no longer exist on disk.
+        // Drop nodes/edges that no longer exist on disk.
         let placeholders = std::iter::repeat_n("?", keep_ids.len())
             .collect::<Vec<_>>()
             .join(",");
-        let params = rusqlite::params_from_iter(keep_ids.iter());
         if keep_ids.is_empty() {
             self.conn.execute("DELETE FROM nodes", [])?;
             self.conn.execute("DELETE FROM edges", [])?;
         } else {
             self.conn.execute(
                 &format!("DELETE FROM nodes WHERE id NOT IN ({placeholders})"),
-                params,
+                rusqlite::params_from_iter(keep_ids.iter()),
             )?;
             self.conn.execute(
                 &format!("DELETE FROM edges WHERE from_id NOT IN ({placeholders})"),
                 rusqlite::params_from_iter(keep_ids.iter()),
             )?;
         }
+
+        // --- v3 card/thread model (fully derived: clear and repopulate) ---
+        self.rebuild_cards_and_threads(&entries)?;
+        Ok(())
+    }
+
+    /// Rebuild the card/thread/membership/link tables from every classified entry.
+    /// A legacy note migrates to a single-card thread of the same title, its frontmatter
+    /// `links` becoming card-body wiki-links `[[id]] — <why>` (the whys survive as
+    /// prose). Paper/source notes (which carry refs) migrate to paper threads.
+    fn rebuild_cards_and_threads(&self, entries: &[Entry]) -> Result<()> {
+        self.conn.execute("DELETE FROM cards", [])?;
+        self.conn.execute("DELETE FROM threads", [])?;
+        self.conn.execute("DELETE FROM membership", [])?;
+        self.conn.execute("DELETE FROM card_links", [])?;
+
+        for entry in entries {
+            match entry {
+                Entry::Card(card) => {
+                    self.insert_card(&card.id, card.title.as_deref(), &card.body, &card.tags, &card.created)?;
+                }
+                Entry::Thread(thread) => {
+                    self.insert_thread(thread)?;
+                }
+                Entry::Legacy(note) => {
+                    self.migrate_legacy(note)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn insert_card(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        body: &str,
+        tags: &[String],
+        created: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO cards (id, title, body, tags, created) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET title=excluded.title, body=excluded.body,
+                tags=excluded.tags, created=excluded.created",
+            rusqlite::params![id, title, body, serde_json::to_string(tags)?, created],
+        )?;
+        for target in vault::wikilinks(body) {
+            self.conn.execute(
+                "INSERT OR IGNORE INTO card_links (from_card, to_target) VALUES (?1, ?2)",
+                rusqlite::params![id, target],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn insert_thread(&self, thread: &Thread) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO threads (id, title, refs, tags, created) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET title=excluded.title, refs=excluded.refs,
+                tags=excluded.tags, created=excluded.created",
+            rusqlite::params![
+                thread.id,
+                thread.title,
+                serde_json::to_string(&thread.refs)?,
+                serde_json::to_string(&thread.tags)?,
+                thread.created,
+            ],
+        )?;
+        // Derive addresses from the manifest position — never stored on disk.
+        for addr in folgezettel::addresses(&thread.manifest) {
+            self.conn.execute(
+                "INSERT OR REPLACE INTO membership (thread_id, card_id, address, position)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![thread.id, addr.card_id, addr.address, addr.position as i64],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Migrate one legacy note to a single-card thread + card.
+    fn migrate_legacy(&self, note: &Note) -> Result<()> {
+        let card_id = format!("{}-card", note.id);
+        let body = migrated_card_body(note);
+        // The card holds the note's atom + its links-as-prose; it is untitled (the
+        // thread carries the title).
+        self.insert_card(&card_id, None, &body, &[], &note.created)?;
+
+        let thread = Thread {
+            id: note.id.clone(),
+            title: note.title.clone(),
+            created: note.created.clone(),
+            tags: note.tags.clone(),
+            refs: note.refs.clone(),
+            manifest: vec![folgezettel::ManifestNode::leaf(card_id)],
+        };
+        self.insert_thread(&thread)?;
         Ok(())
     }
 
@@ -333,10 +507,126 @@ impl Index {
             .map(|(node, _)| node)
             .collect())
     }
+
+    // --- v3 card/thread queries (#22) ----------------------------------------------
+
+    /// Every card, with its first-line label.
+    pub fn cards(&self) -> Result<Vec<CardMeta>> {
+        let mut stmt = self.conn.prepare("SELECT id, title, body FROM cards")?;
+        let rows = stmt.query_map([], |r| {
+            let body: String = r.get(2)?;
+            Ok(CardMeta {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                label: label(&body),
+            })
+        })?;
+        let mut out: Vec<CardMeta> = rows.filter_map(|r| r.ok()).collect();
+        out.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+        Ok(out)
+    }
+
+    /// Every thread with its card count, title-sorted.
+    pub fn threads(&self) -> Result<Vec<ThreadMeta>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.id, t.title, t.refs,
+                    (SELECT COUNT(*) FROM membership m WHERE m.thread_id = t.id) AS card_count
+             FROM threads t
+             ORDER BY t.title COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(ThreadMeta {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                refs: parse_json_vec(&r.get::<_, String>(2)?),
+                card_count: r.get(3)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// The cards of one thread in manifest (address) order, each with its derived
+    /// Folgezettel address and first-line label.
+    pub fn thread_cards(&self, thread_id: &str) -> Result<Vec<ThreadCard>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT m.card_id, m.address, m.position, c.body
+             FROM membership m
+             LEFT JOIN cards c ON c.id = m.card_id
+             WHERE m.thread_id = ?1
+             ORDER BY m.position",
+        )?;
+        let rows = stmt.query_map([thread_id], |r| {
+            let body: Option<String> = r.get(3)?;
+            Ok(ThreadCard {
+                card_id: r.get(0)?,
+                address: r.get(1)?,
+                position: r.get(2)?,
+                label: label(&body.unwrap_or_default()),
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Every thread a card belongs to, with its derived address there. A card in two
+    /// threads returns two rows — two addresses for the one card.
+    pub fn card_memberships(&self, card_id: &str) -> Result<Vec<CardMembership>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT m.thread_id, t.title, m.address
+             FROM membership m
+             JOIN threads t ON t.id = m.thread_id
+             WHERE m.card_id = ?1
+             ORDER BY t.title COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map([card_id], |r| {
+            Ok(CardMembership {
+                thread_id: r.get(0)?,
+                thread_title: r.get(1)?,
+                address: r.get(2)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// The ids a card links to (parsed from its body wiki-links). A target may be a
+    /// card or a thread; resolution is left to the caller.
+    pub fn card_targets(&self, card_id: &str) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT to_target FROM card_links WHERE from_card = ?1 ORDER BY to_target")?;
+        let rows = stmt.query_map([card_id], |r| r.get::<_, String>(0))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
 }
 
 fn parse_json_vec(s: &str) -> Vec<String> {
     serde_json::from_str(s).unwrap_or_default()
+}
+
+/// The migrated body for a legacy note's single card: the note's own body followed by
+/// its frontmatter links rendered as wiki-link prose, so the whys survive as text.
+fn migrated_card_body(note: &Note) -> String {
+    let mut body = note.body.trim_end().to_string();
+    for link in &note.links {
+        if !body.is_empty() {
+            body.push('\n');
+        }
+        if link.why.trim().is_empty() {
+            body.push_str(&format!("[[{}]]", link.to));
+        } else {
+            body.push_str(&format!("[[{}]] — {}", link.to, link.why.trim()));
+        }
+    }
+    body
+}
+
+/// A card's display label: its first non-empty line (the v3 model gives cards no
+/// required title, so the first line is the label everywhere).
+fn label(body: &str) -> String {
+    body.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .to_string()
 }
 
 #[cfg(test)]
@@ -463,6 +753,128 @@ mod tests {
         idx.rebuild_from_vault(&v).unwrap();
         assert_eq!(idx.tags().unwrap(), vec![TagCount { tag: "seminal".into(), count: 1 }]);
         assert_eq!(idx.notes_with_tag("seminal").unwrap()[0].id, a_id);
+    }
+
+    // --- v3 card/thread model (#22) ------------------------------------------------
+
+    use crate::folgezettel::ManifestNode;
+
+    #[test]
+    fn legacy_note_migrates_to_a_single_card_thread_preserving_whys() {
+        // A legacy note A → B (with a why) plus its own body.
+        let dir = TempDir::new().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let b = v.create_note("Backprop", vec![], vec![], vec![], "").unwrap();
+        let mut a = v
+            .create_note("Transformers", vec![], vec![], vec!["nlp".into()], "Self-attention over tokens.")
+            .unwrap();
+        a.links.push(Link { to: b.id.clone(), why: "trained via backprop".into() });
+        v.write_note(&a).unwrap();
+
+        let idx = Index::open_in_memory().unwrap();
+        idx.rebuild_from_vault(&v).unwrap();
+
+        // Each note became a thread of the same title.
+        let threads = idx.threads().unwrap();
+        let titles: Vec<&str> = threads.iter().map(|t| t.title.as_str()).collect();
+        assert!(titles.contains(&"Transformers") && titles.contains(&"Backprop"));
+
+        // The Transformers thread has exactly one card, at address "1".
+        let cards = idx.thread_cards(&a.id).unwrap();
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].address, "1");
+        assert_eq!(cards[0].card_id, format!("{}-card", a.id));
+
+        // The why survives as prose in the migrated card body, and the link is indexed.
+        let card_body = idx
+            .conn
+            .query_row("SELECT body FROM cards WHERE id=?1", [&cards[0].card_id], |r| r.get::<_, String>(0))
+            .unwrap();
+        assert!(card_body.contains("Self-attention over tokens."), "the note body survives");
+        assert!(card_body.contains(&format!("[[{}]] — trained via backprop", b.id)), "the why survives as prose");
+        assert_eq!(idx.card_targets(&cards[0].card_id).unwrap(), vec![b.id.clone()]);
+    }
+
+    #[test]
+    fn paper_note_with_refs_migrates_to_a_paper_thread() {
+        let dir = TempDir::new().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        v.create_note("Attention Is All You Need", vec!["arXiv:1706.03762".into()], vec![], vec![], "seminal")
+            .unwrap();
+        let idx = Index::open_in_memory().unwrap();
+        idx.rebuild_from_vault(&v).unwrap();
+
+        let paper = idx.threads().unwrap().into_iter().find(|t| t.title.contains("Attention")).unwrap();
+        assert_eq!(paper.refs, vec!["arXiv:1706.03762".to_string()], "refs → paper thread manifest");
+    }
+
+    #[test]
+    fn a_card_in_two_threads_has_two_addresses_in_the_index() {
+        // Native v3 files: one card shared by two threads at different positions.
+        let dir = TempDir::new().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let shared = v.create_card("the shared atom", vec![]).unwrap();
+        let other = v.create_card("another atom", vec![]).unwrap();
+        // Thread one: [other, shared] → shared is "2".
+        let t1 = v
+            .create_thread("One", vec![], vec![], vec![
+                ManifestNode::leaf(&other.id),
+                ManifestNode::leaf(&shared.id),
+            ])
+            .unwrap();
+        // Thread two: [shared] → shared is "1".
+        let t2 = v
+            .create_thread("Two", vec![], vec![], vec![ManifestNode::leaf(&shared.id)])
+            .unwrap();
+
+        let idx = Index::open_in_memory().unwrap();
+        idx.rebuild_from_vault(&v).unwrap();
+
+        let mut memberships = idx.card_memberships(&shared.id).unwrap();
+        memberships.sort_by(|a, b| a.thread_id.cmp(&b.thread_id));
+        let addr = |tid: &str| memberships.iter().find(|m| m.thread_id == tid).unwrap().address.clone();
+        assert_eq!(memberships.len(), 2, "one card, two threads, two memberships");
+        assert_eq!(addr(&t1.id), "2");
+        assert_eq!(addr(&t2.id), "1");
+    }
+
+    #[test]
+    fn rebuild_of_the_new_model_is_idempotent() {
+        let dir = TempDir::new().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        // A mix: a legacy note (to migrate) and native card/thread files.
+        v.create_note("Legacy", vec![], vec![], vec![], "old idea").unwrap();
+        let c = v.create_card("native atom", vec![]).unwrap();
+        v.create_thread("Native", vec![], vec![], vec![ManifestNode::leaf(&c.id)]).unwrap();
+
+        let idx = Index::open_in_memory().unwrap();
+        idx.rebuild_from_vault(&v).unwrap();
+        let threads1 = idx.threads().unwrap();
+        let cards1 = idx.cards().unwrap();
+
+        idx.rebuild_from_vault(&v).unwrap();
+        assert_eq!(idx.threads().unwrap(), threads1, "threads stable across rebuild");
+        assert_eq!(idx.cards().unwrap(), cards1, "cards stable across rebuild");
+    }
+
+    #[test]
+    fn deleting_and_rebuilding_the_index_loses_nothing() {
+        // Everything the new model shows is derived from files — a fresh index rebuilt
+        // from the same vault is identical.
+        let dir = TempDir::new().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let c = v.create_card("atom one", vec!["t".into()]).unwrap();
+        let thread = v.create_thread("A thread", vec!["doi:1".into()], vec![], vec![ManifestNode::leaf(&c.id)]).unwrap();
+
+        let idx = Index::open_in_memory().unwrap();
+        idx.rebuild_from_vault(&v).unwrap();
+        let before = idx.thread_cards(&thread.id).unwrap();
+
+        // "Delete" the index by opening a brand-new one and rebuilding from the files.
+        let fresh = Index::open_in_memory().unwrap();
+        fresh.rebuild_from_vault(&v).unwrap();
+        assert_eq!(fresh.thread_cards(&thread.id).unwrap(), before);
+        assert_eq!(fresh.threads().unwrap(), idx.threads().unwrap());
     }
 
     #[test]

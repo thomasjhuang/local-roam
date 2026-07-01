@@ -1,4 +1,5 @@
 mod commands;
+mod folgezettel;
 mod index;
 mod linker;
 mod settings;
@@ -53,6 +54,12 @@ pub fn run() {
             commands::list_sources,
             commands::import_pdf_source,
             commands::open_source,
+            // v3 card/thread model (#22): read surfaces for the new UI (#23+).
+            commands::list_threads,
+            commands::thread_cards,
+            commands::list_cards,
+            commands::card_memberships,
+            commands::card_targets,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
