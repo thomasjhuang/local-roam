@@ -60,6 +60,15 @@ pub fn run() {
             commands::list_cards,
             commands::card_memberships,
             commands::card_targets,
+            // v3 thread view + card editor (#23): write surfaces.
+            commands::get_thread,
+            commands::save_card,
+            commands::rename_thread,
+            commands::new_thread,
+            commands::add_card,
+            commands::split_card,
+            commands::merge_card_up,
+            commands::card_backlinks,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

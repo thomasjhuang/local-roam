@@ -92,6 +92,43 @@ export interface CardMembership {
   address: string;
 }
 
+// --- v3 thread view + card editor (#23) ---
+
+/** A card as it reads inside a thread: derived address + position + full body. */
+export interface ThreadCardFull {
+  card_id: string;
+  address: string;
+  position: number;
+  label: string;
+  body: string;
+}
+
+/** A thread ready to read/write: title, refs, and its cards in manifest order. */
+export interface ThreadFull {
+  id: string;
+  title: string;
+  refs: string[];
+  cards: ThreadCardFull[];
+}
+
+/** Where a split/added card landed: the new card id and its thread. */
+export interface PlacementResult {
+  card_id: string;
+  thread_id: string;
+}
+
+/** A card that links to a target, shown as a backlink with its first-line label. */
+export interface CardRef {
+  card_id: string;
+  label: string;
+  thread_id: string | null;
+  thread_title: string | null;
+  address: string | null;
+}
+
+/** The placement gesture at card birth (CONTEXT.md "The placement gesture"). */
+export type Placement = "continue" | "branch" | "new_thread";
+
 export const api = {
   getSavedVault: () => invoke<string | null>("get_saved_vault"),
   openVault: (path: string) => invoke<void>("open_vault", { path }),
@@ -139,6 +176,43 @@ export const api = {
   cardMemberships: (cardId: string) => invoke<CardMembership[]>("card_memberships", { cardId }),
   /** The ids a card links to (from its body wiki-links); a target may be a card or thread. */
   cardTargets: (cardId: string) => invoke<string[]>("card_targets", { cardId }),
+
+  /**
+   * v3 thread view + card editor (#23) — the write surfaces. The vault is the source of
+   * truth: each mutation writes card/thread files then re-derives the index. The manifest
+   * is maintained silently by the placement gesture; it stays plain, hand-editable text.
+   */
+  /** A thread ready to read (cards in address order, with full bodies) and write. */
+  getThread: (threadId: string) => invoke<ThreadFull>("get_thread", { threadId }),
+  /** Write a card's body through the vault (writing *through* the card). */
+  saveCard: (cardId: string, body: string) => invoke<void>("save_card", { cardId, body }),
+  /** Rename a thread (threads are titled; cards are not). */
+  renameThread: (threadId: string, title: string) => invoke<void>("rename_thread", { threadId, title }),
+  /** Create a new, empty thread; returns its id. */
+  newThread: (title: string) => invoke<string>("new_thread", { title }),
+  /**
+   * Add a fresh card via the placement gesture: `continue` (sibling after the anchor) or
+   * `branch` (child of the anchor); a null anchor appends to the trunk end. Returns the id.
+   */
+  addCard: (threadId: string, anchorCardId: string | null, placement: Placement, body: string) =>
+    invoke<string>("add_card", { threadId, anchorCardId, placement, body }),
+  /**
+   * Split a card at the cursor: `head` stays, `tail` becomes a new card placed by the
+   * gesture (`continue`/`branch` here, or `new_thread` starting a fresh titled thread).
+   */
+  splitCard: (
+    threadId: string,
+    sourceCardId: string,
+    head: string,
+    tail: string,
+    placement: Placement,
+    newThreadTitle: string | null,
+  ) => invoke<PlacementResult>("split_card", { threadId, sourceCardId, head, tail, placement, newThreadTitle }),
+  /** Merge a card up into the previous one (inverse of split); returns the card merged into. */
+  mergeCardUp: (threadId: string, cardId: string) =>
+    invoke<string | null>("merge_card_up", { threadId, cardId }),
+  /** The cards that link to a target, each with its first-line label + a thread for context. */
+  cardBacklinks: (targetId: string) => invoke<CardRef[]>("card_backlinks", { targetId }),
 
   /**
    * Capture namespace — features that *create notes* (templates, daily notes, imports,

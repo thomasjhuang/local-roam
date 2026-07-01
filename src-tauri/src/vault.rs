@@ -556,6 +556,57 @@ impl Vault {
     }
 }
 
+// --- manifest tree mutation (#23) --------------------------------------------------
+// The thread view maintains the manifest silently as the user writes: the placement
+// gesture inserts a new card link, merge removes one. These operate on the parsed tree;
+// the caller re-serializes with `write_thread`. Kept as pure tree functions (no I/O) so
+// they unit-test in isolation, mirroring the pure address function in `folgezettel`.
+
+/// Insert `new_id` as a sibling immediately after the first node matching `anchor_id`,
+/// at that node's own depth (the "continue the thread" placement). Returns true if the
+/// anchor was found; on false the caller typically appends to the trunk end.
+pub fn insert_sibling_after(nodes: &mut Vec<ManifestNode>, anchor_id: &str, new_id: &str) -> bool {
+    if let Some(i) = nodes.iter().position(|n| n.card_id == anchor_id) {
+        nodes.insert(i + 1, ManifestNode::leaf(new_id));
+        return true;
+    }
+    nodes
+        .iter_mut()
+        .any(|n| insert_sibling_after(&mut n.children, anchor_id, new_id))
+}
+
+/// Insert `new_id` as the last child of the first node matching `anchor_id` (the "branch
+/// off the card you're on" placement). Returns true if the anchor was found.
+pub fn insert_child(nodes: &mut Vec<ManifestNode>, anchor_id: &str, new_id: &str) -> bool {
+    for node in nodes.iter_mut() {
+        if node.card_id == anchor_id {
+            node.children.push(ManifestNode::leaf(new_id));
+            return true;
+        }
+        if insert_child(&mut node.children, anchor_id, new_id) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Remove the node matching `card_id`, splicing its children up into its place so nothing
+/// is orphaned (merge deletes a card but keeps its branches in the thread). Returns true
+/// if the node was found.
+pub fn remove_node(nodes: &mut Vec<ManifestNode>, card_id: &str) -> bool {
+    if let Some(i) = nodes.iter().position(|n| n.card_id == card_id) {
+        let children = std::mem::take(&mut nodes[i].children);
+        nodes.remove(i);
+        for (k, child) in children.into_iter().enumerate() {
+            nodes.insert(i + k, child);
+        }
+        return true;
+    }
+    nodes
+        .iter_mut()
+        .any(|n| remove_node(&mut n.children, card_id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -678,6 +729,81 @@ mod tests {
                 ManifestNode::new("b", vec![ManifestNode::leaf("c")]),
             ]
         );
+    }
+
+    // --- manifest tree mutation (#23) ----------------------------------------------
+
+    fn ids(nodes: &[ManifestNode]) -> Vec<(String, Vec<String>)> {
+        nodes
+            .iter()
+            .map(|n| (n.card_id.clone(), n.children.iter().map(|c| c.card_id.clone()).collect()))
+            .collect()
+    }
+
+    #[test]
+    fn insert_sibling_after_places_a_trunk_continuation() {
+        // continue at "b" → new sits between b and c at trunk depth.
+        let mut tree = vec![
+            ManifestNode::leaf("a"),
+            ManifestNode::leaf("b"),
+            ManifestNode::leaf("c"),
+        ];
+        assert!(insert_sibling_after(&mut tree, "b", "new"));
+        let addrs = crate::folgezettel::addresses(&tree);
+        let by_id = |id: &str| addrs.iter().find(|x| x.card_id == id).unwrap().address.clone();
+        assert_eq!(by_id("new"), "3");
+        assert_eq!(by_id("c"), "4");
+    }
+
+    #[test]
+    fn insert_sibling_after_matches_a_nested_anchor_at_its_own_depth() {
+        // continue at a nested "c" → new is c's sibling (2b), not a trunk item.
+        let mut tree = vec![ManifestNode::new(
+            "b",
+            vec![ManifestNode::leaf("c"), ManifestNode::leaf("e")],
+        )];
+        assert!(insert_sibling_after(&mut tree, "c", "new"));
+        let addrs = crate::folgezettel::addresses(&tree);
+        let by_id = |id: &str| addrs.iter().find(|x| x.card_id == id).unwrap().address.clone();
+        assert_eq!(by_id("c"), "1a");
+        assert_eq!(by_id("new"), "1b");
+        assert_eq!(by_id("e"), "1c");
+    }
+
+    #[test]
+    fn insert_child_branches_off_the_anchor() {
+        let mut tree = vec![ManifestNode::leaf("a"), ManifestNode::leaf("b")];
+        assert!(insert_child(&mut tree, "b", "new"));
+        assert_eq!(ids(&tree), vec![
+            ("a".into(), vec![]),
+            ("b".into(), vec!["new".into()]),
+        ]);
+        let addrs = crate::folgezettel::addresses(&tree);
+        assert_eq!(addrs.iter().find(|x| x.card_id == "new").unwrap().address, "2a");
+    }
+
+    #[test]
+    fn insert_returns_false_when_anchor_is_absent() {
+        let mut tree = vec![ManifestNode::leaf("a")];
+        assert!(!insert_sibling_after(&mut tree, "ghost", "new"));
+        assert!(!insert_child(&mut tree, "ghost", "new"));
+        assert_eq!(ids(&tree), vec![("a".into(), vec![])]);
+    }
+
+    #[test]
+    fn remove_node_splices_children_into_its_place() {
+        // Removing "b" (which has children c,e) lifts c and e to the trunk after a.
+        let mut tree = vec![
+            ManifestNode::leaf("a"),
+            ManifestNode::new("b", vec![ManifestNode::leaf("c"), ManifestNode::leaf("e")]),
+            ManifestNode::leaf("f"),
+        ];
+        assert!(remove_node(&mut tree, "b"));
+        assert_eq!(
+            tree.iter().map(|n| n.card_id.clone()).collect::<Vec<_>>(),
+            vec!["a", "c", "e", "f"],
+        );
+        assert!(!remove_node(&mut tree.clone(), "b"), "b is gone after removal");
     }
 
     #[test]

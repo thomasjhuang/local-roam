@@ -79,6 +79,19 @@ pub struct CardMembership {
     pub address: String,
 }
 
+/// A card that links to some target, shown as a backlink with its first-line label as
+/// context (#23). `thread_id`/`address` point at one thread the linking card sits in, so
+/// clicking a backlink can open that thread scrolled to the card. `None` when the linking
+/// card belongs to no thread yet.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct CardRef {
+    pub card_id: String,
+    pub label: String,
+    pub thread_id: Option<String>,
+    pub thread_title: Option<String>,
+    pub address: Option<String>,
+}
+
 pub struct Index {
     conn: Connection,
 }
@@ -596,6 +609,42 @@ impl Index {
         let rows = stmt.query_map([card_id], |r| r.get::<_, String>(0))?;
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
+
+    /// Every card whose body links to `target_id` (a card or a thread), each with its
+    /// first-line label and one thread it lives in for context (#23). This is the
+    /// hand-made backlink — nothing is inferred; it exists only because a user wrote the
+    /// `[[target_id]]` into a card. A card that links a target more than once appears once.
+    pub fn backlinks_to(&self, target_id: &str) -> Result<Vec<CardRef>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT l.from_card, c.body,
+                    (SELECT m.thread_id FROM membership m WHERE m.card_id = l.from_card ORDER BY m.thread_id LIMIT 1),
+                    (SELECT m.address   FROM membership m WHERE m.card_id = l.from_card ORDER BY m.thread_id LIMIT 1)
+             FROM card_links l
+             LEFT JOIN cards c ON c.id = l.from_card
+             WHERE l.to_target = ?1
+             GROUP BY l.from_card",
+        )?;
+        let rows = stmt.query_map([target_id], |r| {
+            let body: Option<String> = r.get(1)?;
+            let thread_id: Option<String> = r.get(2)?;
+            let address: Option<String> = r.get(3)?;
+            Ok((r.get::<_, String>(0)?, label(&body.unwrap_or_default()), thread_id, address))
+        })?;
+        let mut out = Vec::new();
+        for row in rows.filter_map(|r| r.ok()) {
+            let (card_id, label, thread_id, address) = row;
+            let thread_title = match &thread_id {
+                Some(tid) => self
+                    .conn
+                    .query_row("SELECT title FROM threads WHERE id = ?1", [tid], |r| r.get::<_, String>(0))
+                    .ok(),
+                None => None,
+            };
+            out.push(CardRef { card_id, label, thread_id, thread_title, address });
+        }
+        out.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+        Ok(out)
+    }
 }
 
 fn parse_json_vec(s: &str) -> Vec<String> {
@@ -875,6 +924,34 @@ mod tests {
         fresh.rebuild_from_vault(&v).unwrap();
         assert_eq!(fresh.thread_cards(&thread.id).unwrap(), before);
         assert_eq!(fresh.threads().unwrap(), idx.threads().unwrap());
+    }
+
+    #[test]
+    fn backlinks_to_reports_the_linking_card_with_its_first_line() {
+        // A card that writes [[target]] into its body backlinks the target, carrying its
+        // own first-line label and the thread it sits in for context.
+        let dir = TempDir::new().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let target = v.create_card("the target atom", vec![]).unwrap();
+        let linker = v
+            .create_card(&format!("A linking card\n\nsee [[{}]] for detail", target.id), vec![])
+            .unwrap();
+        let thread = v
+            .create_thread("Home", vec![], vec![], vec![ManifestNode::leaf(&linker.id)])
+            .unwrap();
+
+        let idx = Index::open_in_memory().unwrap();
+        idx.rebuild_from_vault(&v).unwrap();
+
+        let back = idx.backlinks_to(&target.id).unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].card_id, linker.id);
+        assert_eq!(back[0].label, "A linking card", "the linking card's first line is the context");
+        assert_eq!(back[0].thread_id.as_deref(), Some(thread.id.as_str()));
+        assert_eq!(back[0].thread_title.as_deref(), Some("Home"));
+        assert_eq!(back[0].address.as_deref(), Some("1"));
+        // A target no card links to has no backlinks.
+        assert!(idx.backlinks_to(&linker.id).unwrap().is_empty());
     }
 
     #[test]

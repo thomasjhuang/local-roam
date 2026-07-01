@@ -201,7 +201,7 @@ memory for the why):
       touches: `src-tauri/src/vault.rs`, `index.rs`, `folgezettel.rs` (new, the pure address
       fn), `commands.rs`, `lib.rs`, `api.ts` · blocked-by: #21
 
-- [ ] **#23 Thread view + card editor** — the make-or-break UI. Read a thread top-to-bottom
+- [x] **#23 Thread view + card editor** — the make-or-break UI. Read a thread top-to-bottom
       as flowing prose (cards concatenated) with card boundaries visible; write *through*
       cards; split a paragraph into a new card via the **placement gesture** (continue /
       branch-off-current / new-thread). The manifest is maintained silently as you write
