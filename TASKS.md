@@ -186,7 +186,7 @@ memory for the why):
       `lib.rs`, `api.ts`, `src/routes/+page.svelte`, `src/routes/graph/` (delete),
       `src/lib/Graph.svelte` (delete), `src/lib/LinkCarousel.svelte` (delete) · blocked-by: none
 
-- [x] **#22 Card/thread data model + derived Folgezettel + migration** (1978a8b) — the foundational
+- [x] **#22 Card/thread data model + derived Folgezettel + migration** (36e3ee1) — the foundational
       new layer; everything downstream depends on it. `vault.rs`: two note kinds — **card**
       (opaque id, optional title, body = one atom) and **thread manifest** (title, optional
       refs, body = nested Markdown list of `[[card]]` links); parse/write the manifest tree.
