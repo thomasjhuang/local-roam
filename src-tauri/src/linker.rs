@@ -1,30 +1,24 @@
-//! Linker — friction mechanic #1: link-from-memory with a mandatory justification.
+//! Linker — a stopgap resolver + edge writer.
 //!
-//! `resolve` takes a title the user typed *from memory* and returns either an exact
-//! match or nothing. It deliberately never returns a candidate list: this is recall,
-//! not recognition. `commit_edge` refuses to create a link without a justification —
-//! no connection may exist in the vault without an understood reason.
+//! `resolve` takes a title and returns either an exact match or nothing. `commit_edge`
+//! writes a directional link into the source note's frontmatter and reindexes it. This
+//! is a temporary shim: the justification gate and 140-char cap of the retired recall
+//! thesis are gone, and the whole linking flow is replaced by the card/thread model in
+//! #22/#23. Kept only so the current UI can still create and follow links.
 
 use crate::index::{Index, NodeMeta};
 use crate::vault::{Link, Vault};
 use anyhow::{anyhow, Result};
 
-/// Hard cap on a justification's length, in characters (#20a). Compression is
-/// elaboration: a tweet-sized "why" forces the essence of the relationship instead
-/// of a pasted abstract. Applies to every path that writes a justification —
-/// `restore_link` re-justification included, since it also goes through
-/// `commit_edge`.
-pub const MAX_JUSTIFICATION_CHARS: usize = 140;
-
-/// The result of resolving a typed-from-memory title.
+/// The result of resolving a typed title.
 #[derive(Debug, PartialEq)]
 pub enum Resolution {
     Exact(NodeMeta),
     NoMatch,
 }
 
-/// Resolve a recalled title to a single note, or nothing. No fuzzy matching, no
-/// candidate list — the user must reproduce the title (or an alias) correctly.
+/// Resolve a title to a single note, or nothing. Exact (trimmed, case-insensitive)
+/// match against a title or alias — no fuzzy matching, no candidate list.
 pub fn resolve(index: &Index, attempt: &str) -> Result<Resolution> {
     match index.find_by_title_or_alias(attempt)? {
         Some(node) => Ok(Resolution::Exact(node)),
@@ -32,9 +26,9 @@ pub fn resolve(index: &Index, attempt: &str) -> Result<Resolution> {
     }
 }
 
-/// Commit a justified, directional edge from `from_id` to `to_id`. The justification
-/// must be non-empty. Writes the link into the source note's frontmatter (the source
-/// of truth) and reindexes it.
+/// Commit a directional edge from `from_id` to `to_id`, with an optional reason.
+/// Writes the link into the source note's frontmatter (the source of truth) and
+/// reindexes it. Rejects self-links; the justification is no longer mandatory.
 pub fn commit_edge(
     vault: &Vault,
     index: &Index,
@@ -42,26 +36,17 @@ pub fn commit_edge(
     to_id: &str,
     justification: &str,
 ) -> Result<()> {
-    let why = justification.trim();
-    if why.is_empty() {
-        return Err(anyhow!("a link requires a one-sentence justification"));
-    }
-    let len = why.chars().count();
-    if len > MAX_JUSTIFICATION_CHARS {
-        return Err(anyhow!(
-            "a justification must fit in {MAX_JUSTIFICATION_CHARS} characters ({len} given) — compress it to the essence of the connection"
-        ));
-    }
     if from_id == to_id {
         return Err(anyhow!("a note cannot link to itself"));
     }
+    let why = justification.trim().to_string();
 
     let mut note = vault.read_note(from_id)?;
     match note.links.iter_mut().find(|l| l.to == to_id) {
-        Some(existing) => existing.why = why.to_string(),
+        Some(existing) => existing.why = why,
         None => note.links.push(Link {
             to: to_id.to_string(),
-            why: why.to_string(),
+            why,
         }),
     }
     vault.write_note(&note)?;
@@ -86,7 +71,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_returns_exact_on_correct_recall() {
+    fn resolve_returns_exact_on_correct_match() {
         let (_d, _v, idx, _a, b_id) = setup();
         assert_eq!(resolve(&idx, "Target").unwrap(), Resolution::Exact(idx.find_by_title_or_alias("Target").unwrap().unwrap()));
         // alias also works
@@ -104,17 +89,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_edge_rejects_empty_justification() {
-        let (_d, v, idx, a_id, b_id) = setup();
-        assert!(commit_edge(&v, &idx, &a_id, &b_id, "   ").is_err());
-        assert!(commit_edge(&v, &idx, &a_id, &b_id, "").is_err());
-        // nothing was written
-        assert!(v.read_note(&a_id).unwrap().links.is_empty());
-        assert!(idx.backlinks(&b_id).unwrap().is_empty());
-    }
-
-    #[test]
-    fn commit_edge_writes_justified_link_to_vault_and_index() {
+    fn commit_edge_writes_link_to_vault_and_index() {
         let (_d, v, idx, a_id, b_id) = setup();
         commit_edge(&v, &idx, &a_id, &b_id, "builds directly on it").unwrap();
 
@@ -128,52 +103,18 @@ mod tests {
     }
 
     #[test]
+    fn commit_edge_allows_empty_justification() {
+        let (_d, v, idx, a_id, b_id) = setup();
+        commit_edge(&v, &idx, &a_id, &b_id, "   ").unwrap();
+        let note = v.read_note(&a_id).unwrap();
+        assert_eq!(note.links.len(), 1);
+        assert_eq!(note.links[0].why, "");
+    }
+
+    #[test]
     fn commit_edge_rejects_self_link() {
         let (_d, v, idx, a_id, _b) = setup();
         assert!(commit_edge(&v, &idx, &a_id, &a_id, "because").is_err());
-    }
-
-    #[test]
-    fn commit_edge_rejects_justification_over_140_chars() {
-        let (_d, v, idx, a_id, b_id) = setup();
-        let over = "x".repeat(MAX_JUSTIFICATION_CHARS + 1);
-        let err = commit_edge(&v, &idx, &a_id, &b_id, &over).unwrap_err();
-        assert!(err.to_string().contains("140"), "error should name the cap: {err}");
-        // nothing was written
-        assert!(v.read_note(&a_id).unwrap().links.is_empty());
-        assert!(idx.backlinks(&b_id).unwrap().is_empty());
-    }
-
-    #[test]
-    fn commit_edge_accepts_justification_at_exactly_140_chars() {
-        let (_d, v, idx, a_id, b_id) = setup();
-        let exact = "y".repeat(MAX_JUSTIFICATION_CHARS);
-        commit_edge(&v, &idx, &a_id, &b_id, &exact).unwrap();
-        assert_eq!(v.read_note(&a_id).unwrap().links[0].why, exact);
-    }
-
-    #[test]
-    fn justification_cap_counts_chars_not_bytes() {
-        let (_d, v, idx, a_id, b_id) = setup();
-        // 140 two-byte chars (280 bytes) must pass: the cap is on characters.
-        let multibyte = "é".repeat(MAX_JUSTIFICATION_CHARS);
-        commit_edge(&v, &idx, &a_id, &b_id, &multibyte).unwrap();
-    }
-
-    #[test]
-    fn justification_cap_applies_when_trimmed_and_leaves_existing_edge_intact() {
-        let (_d, v, idx, a_id, b_id) = setup();
-        // surrounding whitespace doesn't count against the cap…
-        let padded = format!("  {}  ", "z".repeat(MAX_JUSTIFICATION_CHARS));
-        commit_edge(&v, &idx, &a_id, &b_id, &padded).unwrap();
-        // …and an over-cap re-justification (the restore_link path) is rejected
-        // without clobbering the committed why.
-        let over = "x".repeat(MAX_JUSTIFICATION_CHARS + 1);
-        assert!(commit_edge(&v, &idx, &a_id, &b_id, &over).is_err());
-        assert_eq!(
-            v.read_note(&a_id).unwrap().links[0].why,
-            "z".repeat(MAX_JUSTIFICATION_CHARS)
-        );
     }
 
     #[test]

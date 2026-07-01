@@ -1,7 +1,6 @@
 mod commands;
 mod index;
 mod linker;
-mod recall;
 mod settings;
 mod state;
 mod vault;
@@ -40,11 +39,7 @@ pub fn run() {
             commands::resolve_link,
             commands::commit_link,
             commands::outgoing,
-            commands::restore_link,
-            commands::submit_recall,
-            commands::due_reviews,
-            commands::grade_review,
-            commands::what_to_review,
+            commands::backlinks,
             commands::search,
             commands::list_tags,
             commands::notes_by_tag,

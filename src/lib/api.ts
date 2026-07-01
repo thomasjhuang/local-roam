@@ -27,20 +27,12 @@ export interface Backlink {
   from_id: string;
   from_title: string;
   why: string;
-  recall_strength: number;
 }
 
 export interface OutLink {
   to_id: string;
   to_title: string;
   why: string;
-}
-
-export interface RecallResult {
-  hits: Backlink[];
-  missed: Backlink[];
-  spurious: string[];
-  reveal: Backlink[];
 }
 
 /** A tag and how many notes carry it (#18c). For the tag-browsing escape hatch. */
@@ -68,16 +60,6 @@ export interface Template {
   body: string;
 }
 
-/** A connection the user keeps failing to recall — the justification is withheld. */
-export interface FailedConnection {
-  from_id: string;
-  from_title: string;
-  to_id: string;
-  to_title: string;
-  failures: number;
-  attempts: number;
-}
-
 export const api = {
   getSavedVault: () => invoke<string | null>("get_saved_vault"),
   openVault: (path: string) => invoke<void>("open_vault", { path }),
@@ -93,11 +75,9 @@ export const api = {
   commitLink: (fromId: string, toId: string, justification: string) =>
     invoke<void>("commit_link", { fromId, toId, justification }),
   outgoing: (id: string) => invoke<OutLink[]>("outgoing", { id }),
-  submitRecall: (noteId: string, guesses: string[]) =>
-    invoke<RecallResult>("submit_recall", { noteId, guesses }),
+  /** The notes that link to this one, shown directly (the recall gate is retired). */
+  backlinks: (id: string) => invoke<Backlink[]>("backlinks", { id }),
   search: (query: string) => invoke<NodeMeta[]>("search", { query }),
-  /** Connections most often failed in recall, most-failed first. Justification withheld. */
-  whatToReview: (limit: number) => invoke<FailedConnection[]>("what_to_review", { limit }),
   /**
    * Tag-browsing escape hatch (#18c). Navigation only — like `search` above, present
    * but never the default path; browsing a tag surfaces existing notes, never creating

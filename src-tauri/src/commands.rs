@@ -1,9 +1,8 @@
 //! Tauri command layer — thin glue exposing the deep modules to the frontend.
 //! Intentionally shallow; not unit-tested (the logic lives in the modules below it).
 
-use crate::index::{DueReview, FailedConnection, NodeMeta, OutLink, TagCount};
+use crate::index::{Backlink, NodeMeta, OutLink, TagCount};
 use crate::linker::{self, Resolution};
-use crate::recall::{self, RecallResult, ReviewReveal};
 use crate::state::{AppState, OpenVault};
 use crate::bibtex::{self, Source};
 use crate::clip;
@@ -120,63 +119,10 @@ pub fn outgoing(state: State<AppState>, id: String) -> Result<Vec<OutLink>, Stri
     with_vault(&state, |ov| ov.index.outgoing(&id))
 }
 
-/// Restore a faded (decayed) edge by re-justifying it. The justification is required
-/// and re-typed from memory — same friction as creating the link — so a decayed
-/// connection can only come back by re-stating *why* it exists. Re-writes the
-/// justification through the vault, then resets the edge's decay telemetry.
+/// The notes that link to this one, shown directly (the recall gate is retired).
 #[tauri::command]
-pub fn restore_link(
-    state: State<AppState>,
-    from_id: String,
-    to_id: String,
-    justification: String,
-) -> Result<(), String> {
-    with_vault(&state, |ov| {
-        linker::commit_edge(&ov.vault, &ov.index, &from_id, &to_id, &justification)?;
-        ov.index.restore_edge(&from_id, &to_id)
-    })
-}
-
-#[tauri::command]
-pub fn submit_recall(
-    state: State<AppState>,
-    note_id: String,
-    guesses: Vec<String>,
-) -> Result<RecallResult, String> {
-    with_vault(&state, |ov| {
-        recall::submit_guesses(&ov.index, &note_id, &guesses)
-    })
-}
-
-/// Edges due for a spaced-repetition review, most overdue first. Justifications are
-/// withheld — see `grade_review`.
-#[tauri::command]
-pub fn due_reviews(state: State<AppState>) -> Result<Vec<DueReview>, String> {
-    with_vault(&state, |ov| ov.index.due_reviews())
-}
-
-/// Grade a review of the A→B connection. `recalled` is the user's self-assessment,
-/// committed before the justification is revealed; recording it reschedules the edge.
-#[tauri::command]
-pub fn grade_review(
-    state: State<AppState>,
-    from_id: String,
-    to_id: String,
-    recalled: bool,
-) -> Result<ReviewReveal, String> {
-    with_vault(&state, |ov| {
-        recall::grade_review(&ov.index, &from_id, &to_id, recalled)
-    })
-}
-
-/// The connections the user fails most often, for the "what to review" surface.
-/// Justifications are withheld — it points at weak spots, it is not a cheat sheet.
-#[tauri::command]
-pub fn what_to_review(
-    state: State<AppState>,
-    limit: i64,
-) -> Result<Vec<FailedConnection>, String> {
-    with_vault(&state, |ov| ov.index.most_failed_connections(limit))
+pub fn backlinks(state: State<AppState>, id: String) -> Result<Vec<Backlink>, String> {
+    with_vault(&state, |ov| ov.index.backlinks(&id))
 }
 
 #[tauri::command]
