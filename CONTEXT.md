@@ -58,6 +58,24 @@ Knowledge is in the files; if the index is deleted, only usage stats are lost.
 - Full-text search exists but is buried under "escape hatch". **Intentional** — it must exist
   (so a forgotten note isn't lost forever) but must not become the default path.
 
+## The reading layer (deliberate amendment, 2026-07-01)
+
+local-roam is a **recall-enforced Zettelkasten with the source PDFs living inside it**: a
+source is a note whose refs include a local PDF path (`sources.rs`, the library view).
+
+The thesis governs **connections, not document access**. Reading and locating a PDF is
+frictionless *by design* — browse the library, click, read in the system viewer; no recall
+gate. Do not "fix" this by gating reading, and do not use it to justify gating's opposite:
+the graph *around* a source (links, backlinks, the why of an edge) stays earned from memory.
+
+Ingest keeps its own productive friction: a dropped PDF becomes a source only after the user
+writes their **own name and one-sentence idea** for it (generation effect) — never the
+publisher filename, never an auto-fetched title handed over for free. Import creates a note,
+never an edge. And never add similarity-based "you might want to link…" suggestions to the
+library — a candidate list is a candidate list, wherever it appears.
+
+One line: **read freely, connect from memory.**
+
 ## Roadmap
 
 See `TASKS.md`. v2 builds on the recall telemetry already in the schema: draw-the-edges graph

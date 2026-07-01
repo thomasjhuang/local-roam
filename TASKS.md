@@ -119,3 +119,17 @@ notes, never edges; tag browsing is an escape hatch, not the default path.
 
 Lanes: **A** capture-scaffold-notes (wave0 → #18a → #18b, opus) · **B** capture-import
 (#18d → #18e, opus) · **C** tags-navigation (#18c, sonnet). B and C start once #18-wave0 is on `main`.
+
+### #19+ The reading layer (see CONTEXT.md "The reading layer" — read freely, connect from memory)
+
+- [x] **#19 Sources library** — drag-drop a PDF onto the window → it becomes a source note
+      only after the user writes their own name + one-sentence idea (generation effect at
+      ingest; no edges). Zotero-feel library view (newest first, idea snippet, tags), PDF
+      opens in the system viewer; "Open PDF ↗" from the note, `/?note=<id>` deep link back.
+      touches: `src-tauri/src/sources.rs` (new), `commands.rs`, `lib.rs`, `api.ts`,
+      `src/routes/library/`, nav · blocked-by: none
+- [ ] **#20 Recall-gated link carousel** — face-down cards for the library; typing a title
+      from memory flips its card, a flipped card can be dragged onto the open note to form an
+      edge, and the justification is tweet-constrained (≤140 chars). Recall gates the
+      carousel — it must never become a readable pick-list (CONTEXT.md ban on candidate
+      lists). touches: notes view link flow, maybe `linker.rs` · blocked-by: #19

@@ -49,6 +49,16 @@ export interface TagCount {
   count: number;
 }
 
+/** A note that carries a local PDF (#19) — the library's literature-note tier. */
+export interface SourceMeta {
+  id: string;
+  title: string;
+  pdf_path: string;
+  idea: string;
+  tags: string[];
+  created: string;
+}
+
 /** A built-in new-note body skeleton (#18a). Structure only — never edges. */
 export interface Template {
   id: string;
@@ -95,6 +105,14 @@ export const api = {
    */
   listTags: () => invoke<TagCount[]>("list_tags"),
   notesByTag: (tag: string) => invoke<NodeMeta[]>("notes_by_tag", { tag }),
+  /**
+   * Sources library (#19) — the reading layer, frictionless by design: browsing
+   * and opening a PDF trains nothing and gates nothing. The recall thesis governs
+   * the connections around a source, not access to it.
+   */
+  listSources: () => invoke<SourceMeta[]>("list_sources"),
+  /** Open the source's PDF in the system viewer (Preview). */
+  openSource: (id: string) => invoke<void>("open_source", { id }),
 
   /**
    * Capture namespace — features that *create notes* (templates, daily notes, imports,
@@ -117,5 +135,11 @@ export const api = {
     importCitation: (input: string) => invoke<Note>("import_citation", { input }),
     /** Clip a URL → a note with its title, the URL as a ref, and the extracted body — no edges (#18e). */
     clipUrl: (url: string) => invoke<Note>("clip_url", { url }),
+    /**
+     * A dropped PDF → a source note (#19). The name and idea are the user's own
+     * words — the generation-effect friction at ingest. No edges, ever.
+     */
+    importPdf: (path: string, name: string, idea: string) =>
+      invoke<Note>("import_pdf_source", { path, name, idea }),
   },
 };

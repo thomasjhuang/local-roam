@@ -8,6 +8,7 @@ use crate::state::{AppState, OpenVault};
 use crate::bibtex::{self, Source};
 use crate::clip;
 use crate::daily;
+use crate::sources::{self, SourceMeta};
 use crate::templates;
 use crate::vault::Note;
 use tauri::State;
@@ -298,4 +299,76 @@ pub fn clip_url(state: State<AppState>, url: String) -> Result<Note, String> {
     let html = clip::fetch(&url).map_err(|e| format!("{e:#}"))?;
     let src = clip::to_source(&html, &url);
     create_source_note(&state, src)
+}
+
+// --- sources library (#19): the reading layer -------------------------------------
+// Reading and locating a PDF is frictionless by design (CONTEXT.md "The reading
+// layer"); the friction lives at ingest (a self-written name + idea) and, as always,
+// in connecting: import creates a note, never an edge.
+
+/// The library rows: every note that carries a local PDF ref, newest first.
+#[tauri::command]
+pub fn list_sources(state: State<AppState>) -> Result<Vec<SourceMeta>, String> {
+    with_vault(&state, |ov| Ok(sources::sources(&ov.vault.list_notes()?)))
+}
+
+/// Turn a dropped PDF into a source note. The name and idea are the user's own —
+/// the generation-effect friction that replaces pasting a citation. Idempotent per
+/// path: re-dropping an already-imported PDF returns its existing note.
+#[tauri::command]
+pub fn import_pdf_source(
+    state: State<AppState>,
+    path: String,
+    name: String,
+    idea: String,
+) -> Result<Note, String> {
+    let path = path.trim().to_string();
+    let name = name.trim().to_string();
+    let idea = idea.trim().to_string();
+    if !sources::is_pdf_path(&path) {
+        return Err("that file is not a PDF".into());
+    }
+    if !std::path::Path::new(&path).is_file() {
+        return Err(format!("no PDF found at {path}"));
+    }
+    if name.is_empty() {
+        return Err("name the paper in your own words".into());
+    }
+    if idea.is_empty() {
+        return Err("write one sentence: what is this paper to you?".into());
+    }
+    with_vault(&state, |ov| {
+        if let Some(existing) = ov
+            .vault
+            .list_notes()?
+            .into_iter()
+            .find(|n| sources::pdf_ref(&n.refs) == Some(path.as_str()))
+        {
+            return Ok(existing);
+        }
+        let note = ov
+            .vault
+            .create_note(&name, vec![path.clone()], vec![], sources::tags(), &sources::render_body(&idea))?;
+        ov.index.reindex_note(&note)?;
+        Ok(note)
+    })
+}
+
+/// Open a source's PDF in the system viewer. Pure reading — no recall gate.
+#[tauri::command]
+pub fn open_source(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    id: String,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let note = with_vault(&state, |ov| ov.vault.read_note(&id))?;
+    let path = sources::pdf_ref(&note.refs)
+        .ok_or_else(|| format!("\"{}\" has no PDF attached", note.title))?;
+    if !std::path::Path::new(path).is_file() {
+        return Err(format!("the PDF has moved or was deleted: {path}"));
+    }
+    app.opener()
+        .open_path(path, None::<&str>)
+        .map_err(|e| format!("{e:#}"))
 }

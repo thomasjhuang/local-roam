@@ -52,6 +52,19 @@
 
   const parseList = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
 
+  // a source note carries a local PDF ref — reading it is one click, no gate (#19)
+  const notePdf = $derived(
+    note?.refs.find((r) => r.trim().toLowerCase().endsWith(".pdf") && !r.includes("://")) ?? null,
+  );
+  async function openPdf() {
+    if (!note) return;
+    try {
+      await api.openSource(note.id);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   // --- sidebar nav (data-driven; capture slices append entries, append-only) ---
   const navLinks: { href: string; label: string }[] = [
     { href: "/graph", label: "⊹ reconstruct the graph" },
@@ -59,12 +72,16 @@
     { href: "/capture/daily", label: "✎ today's note" },
     { href: "/capture/import", label: "⇲ import a citation" },
     { href: "/capture/clip", label: "✂ clip a URL" },
+    { href: "/library", label: "▤ library — your PDFs" },
   ];
 
   onMount(async () => {
     try {
       const saved = await api.getSavedVault();
       if (saved) await openVault(saved);
+      // deep link from the library (/?note=<id>): open that note directly.
+      const wanted = new URLSearchParams(location.search).get("note");
+      if (wanted && notes.some((n) => n.id === wanted)) await selectNote(wanted);
     } catch (e) {
       error = String(e);
     }
@@ -339,6 +356,9 @@
         <div class="actions">
           <button onclick={save}>{savedFlash ? "Saved ✓" : "Save"}</button>
           <button class="ghost" onclick={startLink}>Link from memory</button>
+          {#if notePdf}
+            <button class="ghost" onclick={openPdf} title={notePdf}>Open PDF ↗</button>
+          {/if}
           <button class="ghost danger" onclick={remove}>Delete</button>
         </div>
 

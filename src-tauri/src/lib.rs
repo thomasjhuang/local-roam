@@ -10,6 +10,8 @@ mod templates;
 mod daily;
 mod bibtex;
 mod clip;
+// sources library (#19): the PDF reading layer.
+mod sources;
 
 use state::AppState;
 use tauri::Manager;
@@ -52,6 +54,10 @@ pub fn run() {
             commands::open_daily_note,
             commands::import_citation,
             commands::clip_url,
+            // sources library (#19): the PDF reading layer.
+            commands::list_sources,
+            commands::import_pdf_source,
+            commands::open_source,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
