@@ -8,7 +8,7 @@
 use crate::folgezettel;
 use crate::vault::{self, Entry, Note, Thread, Vault};
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -598,6 +598,16 @@ impl Index {
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// A card's body, straight from the index cache. `None` if the card is unknown.
+    /// The thread view reads bodies from here so it works uniformly for native cards and
+    /// for cards that exist only as a migrated legacy note (no card file on disk yet).
+    pub fn card_body(&self, card_id: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT body FROM cards WHERE id = ?1", [card_id], |r| r.get::<_, String>(0))
+            .optional()?)
     }
 
     /// The ids a card links to (parsed from its body wiki-links). A target may be a

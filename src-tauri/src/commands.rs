@@ -391,32 +391,78 @@ pub struct PlacementResult {
     pub thread_id: String,
 }
 
-/// A thread ready to read and write: title/refs from the vault (source of truth), cards
-/// in manifest (address) order with their full bodies. A dangling manifest link (a card
-/// whose file is missing) survives as an empty body rather than failing the whole read.
+/// A thread ready to read and write: title/refs + its cards in manifest (address) order
+/// with their full bodies. Read entirely from the index cache, so it works uniformly for
+/// native threads *and* for legacy notes that exist only as a migrated thread in the index
+/// (no card/thread files on disk yet — those are written lazily on the first edit).
 #[tauri::command]
 pub fn get_thread(state: State<AppState>, thread_id: String) -> Result<ThreadFull, String> {
     with_vault(&state, |ov| {
-        let thread = ov.vault.read_thread(&thread_id)?;
-        let cards = ov
+        let meta = ov
             .index
-            .thread_cards(&thread_id)?
+            .threads()?
             .into_iter()
-            .map(|c| ThreadCardFull {
-                body: ov.vault.read_card(&c.card_id).map(|k| k.body).unwrap_or_default(),
+            .find(|t| t.id == thread_id)
+            .ok_or_else(|| anyhow!("no thread {thread_id}"))?;
+        let mut cards = Vec::new();
+        for c in ov.index.thread_cards(&thread_id)? {
+            cards.push(ThreadCardFull {
+                body: ov.index.card_body(&c.card_id)?.unwrap_or_default(),
                 card_id: c.card_id,
                 address: c.address,
                 position: c.position,
                 label: c.label,
-            })
-            .collect();
+            });
+        }
         Ok(ThreadFull {
-            id: thread.id,
-            title: thread.title,
-            refs: thread.refs,
+            id: meta.id,
+            title: meta.title,
+            refs: meta.refs,
             cards,
         })
     })
+}
+
+/// Ensure a thread exists as real card/thread *files* before we edit it. #22 migrates a
+/// legacy note into a thread only in the index (the note file stays legacy); the first
+/// time the thread view writes to such a thread, we materialize it: write each card as a
+/// file (body from the index) and overwrite the legacy `<id>.md` with a native thread
+/// manifest. One-time and idempotent — a thread already backed by a file is left alone.
+/// Migrated threads are always flat (a single card), so a flat manifest reconstruction is
+/// faithful; native threads never reach the reconstruction branch.
+fn ensure_native(ov: &OpenVault, thread_id: &str) -> anyhow::Result<()> {
+    if ov.vault.read_thread(thread_id).is_ok() {
+        return Ok(()); // already a native thread file
+    }
+    let meta = ov
+        .index
+        .threads()?
+        .into_iter()
+        .find(|t| t.id == thread_id)
+        .ok_or_else(|| anyhow!("unknown thread {thread_id}"))?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut manifest = Vec::new();
+    for c in ov.index.thread_cards(thread_id)? {
+        if ov.vault.read_card(&c.card_id).is_err() {
+            ov.vault.write_card(&crate::vault::Card {
+                id: c.card_id.clone(),
+                title: None,
+                created: now.clone(),
+                tags: vec![],
+                body: ov.index.card_body(&c.card_id)?.unwrap_or_default(),
+            })?;
+        }
+        manifest.push(ManifestNode::leaf(c.card_id.as_str()));
+    }
+    ov.vault.write_thread(&crate::vault::Thread {
+        id: thread_id.to_string(),
+        title: meta.title,
+        created: now,
+        tags: vec![],
+        refs: meta.refs,
+        manifest,
+    })?;
+    Ok(())
 }
 
 /// Write a card's body through the vault (writing *through* the card, per #23), then
@@ -424,7 +470,17 @@ pub fn get_thread(state: State<AppState>, thread_id: String) -> Result<ThreadFul
 #[tauri::command]
 pub fn save_card(state: State<AppState>, card_id: String, body: String) -> Result<(), String> {
     with_vault(&state, |ov| {
-        let mut card = ov.vault.read_card(&card_id)?;
+        // Materialize any legacy-backed thread this card sits in, so a card file exists.
+        for m in ov.index.card_memberships(&card_id)? {
+            ensure_native(ov, &m.thread_id)?;
+        }
+        let mut card = ov.vault.read_card(&card_id).unwrap_or_else(|_| crate::vault::Card {
+            id: card_id.clone(),
+            title: None,
+            created: chrono::Utc::now().to_rfc3339(),
+            tags: vec![],
+            body: String::new(),
+        });
         card.body = body;
         ov.vault.write_card(&card)?;
         ov.index.rebuild_from_vault(&ov.vault)?;
@@ -436,6 +492,7 @@ pub fn save_card(state: State<AppState>, card_id: String, body: String) -> Resul
 #[tauri::command]
 pub fn rename_thread(state: State<AppState>, thread_id: String, title: String) -> Result<(), String> {
     with_vault(&state, |ov| {
+        ensure_native(ov, &thread_id)?;
         let mut thread = ov.vault.read_thread(&thread_id)?;
         thread.title = title.trim().to_string();
         ov.vault.write_thread(&thread)?;
@@ -489,6 +546,7 @@ pub fn add_card(
     body: String,
 ) -> Result<String, String> {
     with_vault(&state, |ov| {
+        ensure_native(ov, &thread_id)?;
         let card = ov.vault.create_card(&body, vec![])?;
         let mut thread = ov.vault.read_thread(&thread_id)?;
         place_in_manifest(&mut thread, anchor_card_id.as_deref(), &placement, &card.id);
@@ -513,6 +571,7 @@ pub fn split_card(
     new_thread_title: Option<String>,
 ) -> Result<PlacementResult, String> {
     with_vault(&state, |ov| {
+        ensure_native(ov, &thread_id)?;
         // The head stays with the source card; the tail is lifted into a new card.
         let mut source = ov.vault.read_card(&source_card_id)?;
         source.body = head;
@@ -554,6 +613,7 @@ pub fn merge_card_up(
     card_id: String,
 ) -> Result<Option<String>, String> {
     with_vault(&state, |ov| {
+        ensure_native(ov, &thread_id)?;
         let ordered = ov.index.thread_cards(&thread_id)?;
         let Some(pos) = ordered.iter().position(|c| c.card_id == card_id) else {
             return Ok(None);
@@ -635,6 +695,40 @@ mod tests {
         assert!(pairs.contains(&("cont".into(), "2".into())), "continue → 2");
         assert!(pairs.contains(&("br".into(), "3a".into())), "branch → 3a");
         assert!(pairs.contains(&("end".into(), "4".into())), "no anchor → trunk end");
+    }
+
+    #[test]
+    fn ensure_native_materializes_a_migrated_legacy_note_into_files() {
+        // A legacy note becomes a thread only in the index (its file stays legacy). The
+        // first edit must convert it to real card/thread files — otherwise get_thread and
+        // every mutation fail on a legacy-backed thread (the whole existing vault).
+        let dir = TempDir::new().unwrap();
+        let vault = Vault::open(dir.path()).unwrap();
+        let note = vault
+            .create_note("Backprop", vec![], vec![], vec![], "The chain rule, bookkept.")
+            .unwrap();
+        let index = Index::open_in_memory().unwrap();
+        index.rebuild_from_vault(&vault).unwrap();
+
+        let ov = OpenVault { vault, index };
+        // Before: the thread exists in the index but reading it as a native file fails.
+        assert!(ov.vault.read_thread(&note.id).is_err(), "legacy note isn't a thread file yet");
+        assert!(ov.index.threads().unwrap().iter().any(|t| t.id == note.id), "but it's a thread in the index");
+
+        ensure_native(&ov, &note.id).unwrap();
+
+        // After: a native thread file + its card file exist, carrying the migrated body.
+        let thread = ov.vault.read_thread(&note.id).expect("now a native thread file");
+        assert_eq!(thread.title, "Backprop");
+        assert_eq!(thread.manifest.len(), 1);
+        let card_id = &thread.manifest[0].card_id;
+        assert!(ov.vault.read_card(card_id).unwrap().body.contains("chain rule"));
+
+        // Idempotent: a second call is a no-op, and a rebuild sees only the native model.
+        ensure_native(&ov, &note.id).unwrap();
+        ov.index.rebuild_from_vault(&ov.vault).unwrap();
+        assert!(ov.vault.list_notes().unwrap().is_empty(), "no legacy notes remain");
+        assert_eq!(ov.index.thread_cards(&note.id).unwrap().len(), 1);
     }
 
     #[test]
